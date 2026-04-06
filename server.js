@@ -14,7 +14,16 @@ const logger = require('./src/logger');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const HISTORY_PATH = path.join(__dirname, 'post-history.json');
 
-let config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+} catch (err) {
+  // If config.json doesn't exist (like on Heroku fresh deploy), copy the example
+  logger.warn('config.json not found, constructing from template...');
+  const templatePath = path.join(__dirname, 'config.example.json');
+  fs.copyFileSync(templatePath, CONFIG_PATH);
+  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+}
 
 // Backward compat: migrate channelId → channels
 if (config.channelId && !config.channels) {
