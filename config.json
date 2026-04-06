@@ -1,0 +1,33 @@
+{
+  "botToken": "8732489269:AAGieyicCDH6SPQ-MAweM3Xxs30PKSUtvME",
+  "channels": [
+    {
+      "id": "-1003607537194",
+      "name": "Main Channel"
+    },
+    {
+      "id": "-1003310604104",
+      "name": "new"
+    }
+  ],
+  "ownerId": 1623892821,
+  "approvedUsers": [
+    1623892821
+  ],
+  "dashboardPassword": "luxalgo",
+  "geminiKeys": [
+    "AIzaSyA8ME-1ckYY2ic0TVSIBJRoDXw7sjLogpA",
+    "AIzaSyD3je2v4aj9cplChBQVJGhcxWNQjIxvNqs",
+    "AIzaSyBvH03jXuvhPlAr0gvtDBhhUKMhHIwmhSw",
+    "AIzaSyBaNFKxaK4WvKrfc-OyLEH-am4huSuQxqI",
+    "AIzaSyBNkv64nCjWPo2jkU-yqUJ6WYhHgAvc_-M"
+  ],
+  "postsPerDay": 4,
+  "timezone": "America/New_York",
+  "postStartHour": 9,
+  "postEndHour": 21,
+  "affiliateLink": "",
+  "affiliateEnabled": false,
+  "imageEnabled": true,
+  "botEnabled": true
+}
