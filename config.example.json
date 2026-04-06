@@ -1,0 +1,18 @@
+{
+  "botToken": "YOUR_BOT_TOKEN_HERE",
+  "channels": [
+    { "id": "-100XXXXXXXXXX", "name": "Main Channel" }
+  ],
+  "ownerId": 0,
+  "approvedUsers": [],
+  "dashboardPassword": "changeme",
+  "geminiKeys": [],
+  "postsPerDay": 4,
+  "timezone": "America/New_York",
+  "postStartHour": 9,
+  "postEndHour": 21,
+  "affiliateLink": "",
+  "affiliateEnabled": false,
+  "imageEnabled": false,
+  "botEnabled": true
+}

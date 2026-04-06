@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LuxAlgo Bot — Dashboard</title>
+  <meta name="description" content="LuxAlgo Telegram Auto-Poster Bot Dashboard">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══ Toast Container ═══ -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ═══ LOGIN SCREEN ═══ -->
+<div id="login-screen">
+  <div class="login-container">
+    <div class="login-logo">LuxAlgo Bot</div>
+    <div class="login-sub">Telegram Auto-Poster Dashboard</div>
+    <input type="password" id="loginPassword" class="login-input" placeholder="Enter dashboard password" autocomplete="off">
+    <button id="loginBtn" class="login-btn">Unlock Dashboard</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- ═══ MAIN DASHBOARD ═══ -->
+<div id="dashboard">
+
+  <!-- Header -->
+  <header class="dash-header">
+    <div class="dash-brand">
+      <div class="brand-text">LuxAlgo Bot</div>
+      <span class="brand-badge">Auto-Poster</span>
+    </div>
+
+    <div class="status-dot-wrap">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-label" id="statusLabel">Connecting...</span>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn" id="toggleBotBtn" title="Pause / Resume bot">
+        <span id="toggleBotIcon">⏸</span> <span id="toggleBotText">Pause</span>
+      </button>
+      <button class="btn" id="settingsBtn" title="Settings">⚙️ <span>Settings</span></button>
+      <button class="btn btn-danger" id="logoutBtn" title="Logout">🔓</button>
+    </div>
+  </header>
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-icon">📊</div>
+      <div class="stat-value" id="statTotal">0</div>
+      <div class="stat-label">Total Posts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">📅</div>
+      <div class="stat-value" id="statToday">0</div>
+      <div class="stat-label">Posts Today</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">🔑</div>
+      <div class="stat-value" id="statKeys">0</div>
+      <div class="stat-label">Active Keys</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon">📡</div>
+      <div class="stat-value" id="statApiCalls">0</div>
+      <div class="stat-label">API Calls</div>
+    </div>
+  </div>
+
+  <!-- Main 3-Column Grid -->
+  <div class="main-grid">
+
+    <!-- Left Column: Countdown + Timeline -->
+    <div>
+      <!-- Countdown -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title">⏱️ Next Post</div>
+        </div>
+        <div class="card-body">
+          <div class="countdown-display">
+            <div class="countdown-value" id="countdownValue">--:--:--</div>
+            <div class="countdown-label">until next auto-post</div>
+            <div class="countdown-next">Scheduled at <span id="countdownNext">--:--</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Schedule Timeline -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📅 Schedule Timeline</div>
+        </div>
+        <div class="card-body">
+          <div class="timeline" id="scheduleTimeline">
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              <div class="empty-text">No schedule yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Column: Quick Fire + History -->
+    <div>
+      <!-- Quick Fire -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title">⚡ Quick Fire</div>
+          <span style="font-size:0.78rem;color:var(--text-muted)">One-click manual post</span>
+        </div>
+        <div class="card-body">
+          <div class="quickfire-grid" id="quickfireGrid">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Post History -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📜 Post History</div>
+        </div>
+        <div class="card-body">
+          <div class="history-list" id="historyList">
+            <div class="empty-state">
+              <div class="empty-icon">📭</div>
+              <div class="empty-text">No posts yet. Fire one above!</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: API Keys + Live Logs -->
+    <div>
+      <!-- API Keys -->
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="card-title">🔑 API Keys</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn" id="validateKeysBtn" style="padding:5px 12px;font-size:0.75rem" title="Test all keys & remove invalid">🔍 Validate</button>
+            <span style="font-size:0.78rem;color:var(--text-muted)" id="keyCountBadge">0 keys</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="key-list" id="keyList">
+            <div class="empty-state">
+              <div class="empty-icon">🔐</div>
+              <div class="empty-text">Add your first Gemini API key</div>
+            </div>
+          </div>
+          <div class="add-key-form">
+            <input type="text" id="newKeyInput" placeholder="Paste Gemini API key...">
+            <button class="btn btn-primary" id="addKeyBtn">Add</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Logs -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">📋 Live Logs</div>
+          <button class="btn" id="clearLogsBtn" style="padding:5px 12px;font-size:0.75rem">Clear</button>
+        </div>
+        <div class="card-body" style="padding:10px">
+          <div class="logs-terminal" id="logsTerminal">
+            <div class="empty-state">
+              <div class="empty-text" style="color:var(--text-muted);font-family:var(--mono);font-size:0.8rem">Waiting for log output...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main-grid -->
+</div><!-- /dashboard -->
+
+<!-- ═══ SETTINGS OVERLAY ═══ -->
+<div class="settings-overlay" id="settingsOverlay"></div>
+<div class="settings-panel" id="settingsPanel">
+  <div class="settings-header">
+    <div class="settings-title">⚙️ Settings</div>
+    <button class="settings-close" id="settingsClose">&times;</button>
+  </div>
+
+  <!-- Bot Config -->
+  <div class="settings-section">
+    <div class="settings-section-title">Bot Configuration</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Bot Token</div>
+        <div class="setting-desc">Telegram Bot API token</div>
+      </div>
+    </div>
+    <input type="text" id="settingBotToken" class="setting-input" placeholder="Bot token">
+  </div>
+
+  <!-- Channels -->
+  <div class="settings-section">
+    <div class="settings-section-title">📡 Channels</div>
+    <div class="setting-desc" style="margin-bottom:10px">Posts are sent to ALL channels below</div>
+    <div class="user-list" id="channelList"></div>
+    <div class="add-user-form" style="margin-top:8px">
+      <input type="text" id="newChannelId" class="setting-input" placeholder="Channel ID (e.g. -100...)" style="flex:2">
+      <input type="text" id="newChannelName" class="setting-input" placeholder="Name (optional)" style="flex:1">
+      <button class="btn btn-primary" id="addChannelBtn">Add</button>
+    </div>
+  </div>
+
+  <!-- Schedule -->
+  <div class="settings-section">
+    <div class="settings-section-title">Schedule</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Posts per Day</div>
+      </div>
+      <input type="number" id="settingPostsPerDay" class="setting-input setting-input-sm" min="1" max="24" value="4">
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Timezone</div>
+      </div>
+      <select id="settingTimezone" class="setting-select">
+        <option value="America/New_York">US Eastern (New York)</option>
+        <option value="America/Chicago">US Central (Chicago)</option>
+        <option value="America/Denver">US Mountain (Denver)</option>
+        <option value="America/Los_Angeles">US Pacific (Los Angeles)</option>
+        <option value="UTC">UTC</option>
+        <option value="Europe/London">UK (London)</option>
+        <option value="Europe/Berlin">EU Central (Berlin)</option>
+        <option value="Asia/Kolkata">India (Kolkata)</option>
+        <option value="Asia/Tokyo">Japan (Tokyo)</option>
+        <option value="Asia/Dubai">UAE (Dubai)</option>
+        <option value="Australia/Sydney">Australia (Sydney)</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Post Window</div>
+        <div class="setting-desc">Start and end hour (24h format)</div>
+      </div>
+      <div class="flex gap-8 items-center">
+        <input type="number" id="settingStartHour" class="setting-input setting-input-sm" min="0" max="23">
+        <span style="color:var(--text-muted)">to</span>
+        <input type="number" id="settingEndHour" class="setting-input setting-input-sm" min="1" max="24">
+      </div>
+    </div>
+  </div>
+
+  <!-- Affiliate -->
+  <div class="settings-section">
+    <div class="settings-section-title">Affiliate Link</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Enable Affiliate</div>
+        <div class="setting-desc">Add affiliate CTA to posts</div>
+      </div>
+      <button class="btn-toggle" id="settingAffiliateToggle"></button>
+    </div>
+    <input type="text" id="settingAffiliateLink" class="setting-input" placeholder="https://luxalgo.com/?ref=yourcode" style="margin-top:4px">
+  </div>
+
+  <!-- Image Generation -->
+  <div class="settings-section">
+    <div class="settings-section-title">Image Generation</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Auto-Generate Images</div>
+        <div class="setting-desc">Attach AI-generated images to posts (free via Pollinations.ai)</div>
+      </div>
+      <button class="btn-toggle" id="settingImageToggle"></button>
+    </div>
+  </div>
+
+  <!-- Access Control -->
+  <div class="settings-section">
+    <div class="settings-section-title">Access Control</div>
+    <div class="setting-label" style="margin-bottom:6px">Approved Telegram User IDs</div>
+    <div class="setting-desc" style="margin-bottom:10px">Only these users can interact with the bot</div>
+    <div class="user-list" id="userList"></div>
+    <div class="add-user-form">
+      <input type="text" id="newUserId" class="setting-input" placeholder="Telegram User ID">
+      <button class="btn btn-primary" id="addUserBtn">Add</button>
+    </div>
+  </div>
+
+  <!-- Dashboard Security -->
+  <div class="settings-section">
+    <div class="settings-section-title">Dashboard Security</div>
+    <div class="setting-label" style="margin-bottom:8px">Dashboard Password</div>
+    <input type="text" id="settingPassword" class="setting-input" placeholder="Enter new password">
+  </div>
+
+  <!-- Save Button -->
+  <div class="settings-section" style="border-bottom:none">
+    <button class="btn btn-primary w-full" id="saveSettingsBtn" style="padding:14px;font-size:1rem;justify-content:center">
+      💾 Save All Settings
+    </button>
+  </div>
+</div>
+
+<!-- ═══ Post Preview Modal ═══ -->
+<div class="modal-overlay" id="postModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div class="card-title" id="modalTitle">Post Preview</div>
+      <button class="settings-close" id="modalClose">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

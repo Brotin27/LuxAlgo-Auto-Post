@@ -1,0 +1,17 @@
+{
+  "name": "luxalgo-telegram-bot",
+  "version": "1.0.0",
+  "description": "Automated LuxAlgo Telegram channel poster with beautiful dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "node-cron": "^3.0.3",
+    "express": "^4.21.0",
+    "express-session": "^1.18.0"
+  }
+}
