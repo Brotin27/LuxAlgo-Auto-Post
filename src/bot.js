@@ -10,8 +10,24 @@ class Bot {
   }
 
   init() {
+    if (!this.config.botToken || this.config.botToken === 'YOUR_BOT_TOKEN_HERE') {
+      logger.warn('Bot token not configured. Add it in the dashboard to start the Telegram bot.');
+      return;
+    }
+
     try {
       this.bot = new TelegramBot(this.config.botToken, { polling: true });
+
+      // Suppress massive log spam on polling error (e.g. invalid token)
+      this.bot.on('polling_error', (error) => {
+        if (error.code === 'ETELEGRAM' && error.message.includes('404')) {
+          logger.error('Invalid Bot Token! Polling stopped. Please update token in dashboard.');
+          this.stop();
+        } else {
+          logger.warn(`Telegram polling error: ${error.message}`);
+        }
+      });
+
       this.setupCommands();
       this.isRunning = true;
       logger.success('Telegram bot connected and polling');
