@@ -149,10 +149,11 @@ class Bot {
   }
 
   async _sendToSingleChannel(channelId, content, imageUrl) {
-    // If image URL is provided, send as photo with caption
+    // If image URL is provided, try to send it attached to the text
     if (imageUrl) {
       try {
         if (content.length <= 1024) {
+          // Standard photo with caption (cleanest look)
           await this.bot.sendPhoto(channelId, imageUrl, {
             caption: content,
             parse_mode: 'HTML'
@@ -160,12 +161,15 @@ class Bot {
           logger.success(`Post + image → ${channelId}`);
           return;
         } else {
-          await this.bot.sendPhoto(channelId, imageUrl);
-          await this.bot.sendMessage(channelId, content, {
+          // Text exceeds 1024 limit. Instead of splitting, send as a single text message
+          // with a hidden link to the image at the start to trigger a rich link preview.
+          // &#8203; is a zero-width space.
+          const unifiedContent = `<a href="${imageUrl}">&#8203;</a>${content}`;
+          await this.bot.sendMessage(channelId, unifiedContent, {
             parse_mode: 'HTML',
-            disable_web_page_preview: true
+            disable_web_page_preview: false // Must be false to show the image preview
           });
-          logger.success(`Post + image (split) → ${channelId}`);
+          logger.success(`Post + image (unified) → ${channelId}`);
           return;
         }
       } catch (imgError) {
