@@ -228,7 +228,7 @@ app.post('/api/channels/add', requireAuth, (req, res) => {
 
 app.post('/api/channels/remove', requireAuth, (req, res) => {
   const { id } = req.body;
-  config.channels = (config.channels || []).filter(c => c.id !== id);
+  config.channels = (config.channels || []).filter(c => String(c.id) !== String(id));
   saveConfig();
   logger.info(`Channel removed: ${id}`);
   res.json({ success: true, channels: config.channels });

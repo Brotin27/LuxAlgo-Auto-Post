@@ -91,6 +91,19 @@ server {
 }
 ```
 
+## ☁️ Heroku Deployment
+
+This bot is fully compatible with Heroku. Deploying takes just a few steps:
+
+1. **Create Heroku App:**
+   Log into Heroku and create a new application.
+2. **Connect GitHub:**
+   Connect your fork/repository of this project in the "Deploy" tab.
+3. **Setup Config:**
+   Since Heroku cannot write persistent changes to `config.json` on its ephemeral filesystem, ensure your `config.json` has your base credentials before deploying, or set them up directly via the Heroku config variables.
+4. **Deploy Branch:**
+   Click "Deploy Branch" on the `main` branch. Heroku will automatically read the `Procfile` and start the bot.
+
 ## ⚙️ Configuration
 
 Edit `config.json` or use the web dashboard:

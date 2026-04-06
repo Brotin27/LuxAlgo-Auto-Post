@@ -161,19 +161,32 @@ class Bot {
           logger.success(`Post + image → ${channelId}`);
           return;
         } else {
-          // Text exceeds 1024 limit. Instead of splitting, send as a single text message
-          // with a hidden link to the image at the start to trigger a rich link preview.
-          // &#8203; is a zero-width space.
-          const unifiedContent = `<a href="${imageUrl}">&#8203;</a>${content}`;
-          await this.bot.sendMessage(channelId, unifiedContent, {
+          // Text exceeds 1024 limit. Instead of splitting, send as a single text message.
+          // We use link_preview_options to display the image prominently ABOVE the text.
+          await this.bot.sendMessage(channelId, content, {
             parse_mode: 'HTML',
-            disable_web_page_preview: false // Must be false to show the image preview
+            link_preview_options: JSON.stringify({
+              url: imageUrl,
+              show_above_text: true,
+              is_disabled: false
+            })
           });
           logger.success(`Post + image (unified) → ${channelId}`);
           return;
         }
       } catch (imgError) {
-        logger.warn(`Image failed for ${channelId}, trying text only`);
+        // Fallback for older bot API or generic error
+        try {
+          const unifiedContent = `<a href="${imageUrl}">&#8203;</a>${content}`;
+          await this.bot.sendMessage(channelId, unifiedContent, {
+            parse_mode: 'HTML',
+            disable_web_page_preview: false
+          });
+          logger.success(`Post + image (unified legacy) → ${channelId}`);
+          return;
+        } catch (legacyErr) {
+          logger.warn(`Image failed entirely for ${channelId}, trying text only`);
+        }
       }
     }
 

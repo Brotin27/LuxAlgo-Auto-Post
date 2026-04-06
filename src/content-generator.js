@@ -105,7 +105,9 @@ STRUCTURE TEMPLATE (follow this pattern):
 #Hashtag1 #Hashtag2 #Hashtag3
 
 CONTENT RULES:
-- Write in English only
+- Write in very simple, easy-to-understand English
+- Avoid overly complex or complicated trading jargon
+- Explain things in a way a beginner could easily understand
 - Use emojis strategically (6-10 per post for visual appeal)
 - Sound knowledgeable, confident, authentic — NOT salesy
 - Focus on educating and providing genuine value
