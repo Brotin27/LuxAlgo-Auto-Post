@@ -39,6 +39,11 @@ function toast(message, type = 'info') {
 function showLogin() {
   $('#login-screen').style.display = 'flex';
   $('#dashboard').style.display = 'none';
+
+  // Stop all polling to prevent 401 spam after session loss
+  if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+  if (eventSource) { eventSource.close(); eventSource = null; }
 }
 
 function showDashboard() {
@@ -69,8 +74,8 @@ $('#loginBtn').addEventListener('click', async () => {
   try {
     await api('/auth/login', 'POST', { password: pw });
     showDashboard();
-  } catch {
-    $('#loginError').textContent = 'Wrong password';
+  } catch (err) {
+    $('#loginError').textContent = err.message === 'Unauthorized' ? 'Wrong password' : (err.message || 'Wrong password');
     $('#loginPassword').value = '';
     $('#loginPassword').focus();
   }
@@ -92,6 +97,10 @@ let countdownInterval = null;
 let eventSource = null;
 
 function initDashboard() {
+  // Clear previous intervals to prevent duplicates
+  if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+
   fetchStatus();
   fetchSchedule();
   fetchHistory();
@@ -102,14 +111,12 @@ function initDashboard() {
   startLiveLogStream();
 
   // Refresh loops
-  if (refreshInterval) clearInterval(refreshInterval);
   refreshInterval = setInterval(() => {
     fetchStatus();
     fetchSchedule();
     fetchCountdown();
   }, 5000);
 
-  if (countdownInterval) clearInterval(countdownInterval);
   countdownInterval = setInterval(fetchCountdown, 1000);
 }
 
