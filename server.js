@@ -9,37 +9,53 @@ const KeyRotator = require('./src/key-rotator');
 const Scheduler = require('./src/scheduler');
 const { getAllCategories } = require('./src/templates');
 const logger = require('./src/logger');
+const db = require('./src/db');
 
 // ─── Config ────────────────────────────────────────
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const HISTORY_PATH = path.join(__dirname, 'post-history.json');
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://yaranvaernta_db_user:yaranvaernta_db_user@cluster0.b0sdbky.mongodb.net/?appName=Cluster0';
 
-let config;
+// Load file-based config as initial defaults
+let fileConfig;
 try {
-  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 } catch (err) {
-  // If config.json doesn't exist (like on Heroku fresh deploy), copy the example
   logger.warn('config.json not found, constructing from template...');
   const templatePath = path.join(__dirname, 'config.example.json');
-  fs.copyFileSync(templatePath, CONFIG_PATH);
-  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  try { fs.copyFileSync(templatePath, CONFIG_PATH); } catch { /* Heroku might not allow writes */ }
+  try { fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {
+    fileConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.example.json'), 'utf8'));
+  }
 }
 
 // Backward compat: migrate channelId → channels
-if (config.channelId && !config.channels) {
-  config.channels = [{ id: config.channelId, name: 'Main Channel' }];
-  delete config.channelId;
+if (fileConfig.channelId && !fileConfig.channels) {
+  fileConfig.channels = [{ id: fileConfig.channelId, name: 'Main Channel' }];
+  delete fileConfig.channelId;
 }
-if (!config.channels) config.channels = [];
+if (!fileConfig.channels) fileConfig.channels = [];
 
+let config = fileConfig;
 let postHistory = [];
 try { postHistory = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); } catch { postHistory = []; }
 
+/**
+ * Save config to MongoDB (primary) + file (fallback).
+ */
 function saveConfig() {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+  // Always try MongoDB first
+  db.saveConfig(config).catch(() => {});
+  // Also try file (may fail on Heroku but works locally)
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2)); } catch { /* ignore */ }
 }
+
+/**
+ * Save history to MongoDB (primary) + file (fallback).
+ */
 function saveHistory() {
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(postHistory.slice(0, 200), null, 2));
+  // File-based backup (may fail on Heroku)
+  try { fs.writeFileSync(HISTORY_PATH, JSON.stringify(postHistory.slice(0, 200), null, 2)); } catch { /* ignore */ }
 }
 
 // ─── Initialize Components ─────────────────────────
@@ -56,6 +72,8 @@ scheduler.onHistoryUpdate = (entry) => {
   postHistory.unshift(entry);
   if (postHistory.length > 200) postHistory = postHistory.slice(0, 200);
   saveHistory();
+  // Persist to MongoDB
+  db.addHistoryEntry(entry).catch(() => {});
 };
 bot.onManualPost = () => scheduler.manualPost();
 
@@ -439,34 +457,74 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ─── Start Everything ──────────────────────────────
-app.listen(PORT, HOST, () => {
-  console.log('');
-  console.log('  ╔══════════════════════════════════════════╗');
-  console.log('  ║   🚀  LuxAlgo Telegram Bot Dashboard     ║');
-  console.log(`  ║   🌐  http://${HOST}:${PORT}               ║`);
-  console.log('  ║   🔑  Password: ' + config.dashboardPassword.padEnd(23) + '  ║');
-  console.log('  ╚══════════════════════════════════════════╝');
-  console.log('');
+// ─── Start Everything (Async — MongoDB first) ─────
+async function startApp() {
+  // 1. Connect to MongoDB
+  const dbConnected = await db.connectDB(MONGODB_URI);
 
-  logger.success(`Dashboard live at http://${HOST}:${PORT}`);
-  logger.info(`Timezone: ${config.timezone}`);
-  logger.info(`Posts/day: ${config.postsPerDay}`);
-  logger.info(`Gemini keys: ${keyRotator.getKeyCount()}`);
-  logger.info(`Channels: ${(config.channels || []).length}`);
-  logger.info(`Approved users: ${config.approvedUsers.join(', ')}`);
+  if (dbConnected) {
+    // 2. Load config from MongoDB (overrides file-based)
+    const dbConfig = await db.loadConfig(config);
+    if (dbConfig) {
+      // Merge MongoDB config into our active config object
+      Object.assign(config, dbConfig);
+      logger.info('📦 Config loaded from MongoDB');
+
+      // Re-sync keys from MongoDB config
+      const currentKeys = [...keyRotator.keys];
+      for (const k of currentKeys) keyRotator.removeKey(k);
+      config.geminiKeys.forEach(k => keyRotator.addKey(k));
+      logger.info(`🔑 ${keyRotator.getKeyCount()} API keys loaded from MongoDB`);
+    }
+
+    // 3. Load history from MongoDB
+    const dbHistory = await db.loadHistory(200);
+    if (dbHistory && dbHistory.length > 0) {
+      postHistory = dbHistory;
+      logger.info(`📜 ${postHistory.length} history entries loaded from MongoDB`);
+    } else if (postHistory.length > 0) {
+      // Seed MongoDB with file-based history (first-time migration)
+      await db.seedHistory(postHistory);
+    }
+  }
+
+  // 4. Start Express server
+  app.listen(PORT, HOST, () => {
+    console.log('');
+    console.log('  ╔══════════════════════════════════════════╗');
+    console.log('  ║   🚀  LuxAlgo Telegram Bot Dashboard     ║');
+    console.log(`  ║   🌐  http://${HOST}:${PORT}               ║`);
+    console.log('  ║   🔑  Password: ' + config.dashboardPassword.padEnd(23) + '  ║');
+    console.log(`  ║   💾  Storage: ${dbConnected ? 'MongoDB ✓' : 'File-based ⚠'}         ║`);
+    console.log('  ╚══════════════════════════════════════════╝');
+    console.log('');
+
+    logger.success(`Dashboard live at http://${HOST}:${PORT}`);
+    logger.info(`Storage: ${dbConnected ? 'MongoDB Atlas (persistent)' : 'File-based (ephemeral!)'}`);
+    logger.info(`Timezone: ${config.timezone}`);
+    logger.info(`Posts/day: ${config.postsPerDay}`);
+    logger.info(`Gemini keys: ${keyRotator.getKeyCount()}`);
+    logger.info(`Channels: ${(config.channels || []).length}`);
+    logger.info(`Approved users: ${config.approvedUsers.join(', ')}`);
+  });
+
+  // 5. Start Telegram bot
+  try {
+    bot.init();
+  } catch (e) {
+    logger.error('Telegram bot failed to start — check the bot token');
+  }
+
+  // 6. Start scheduler if keys available
+  if (config.botEnabled && keyRotator.getKeyCount() > 0) {
+    scheduler.start();
+  } else if (keyRotator.getKeyCount() === 0) {
+    logger.warn('No Gemini API keys — add keys in dashboard to start auto-posting');
+  }
+}
+
+// Launch!
+startApp().catch(err => {
+  logger.error(`Fatal startup error: ${err.message}`);
+  process.exit(1);
 });
-
-// Start Telegram bot
-try {
-  bot.init();
-} catch (e) {
-  logger.error('Telegram bot failed to start — check the bot token');
-}
-
-// Start scheduler if keys available
-if (config.botEnabled && keyRotator.getKeyCount() > 0) {
-  scheduler.start();
-} else if (keyRotator.getKeyCount() === 0) {
-  logger.warn('No Gemini API keys — add keys in dashboard to start auto-posting');
-}
