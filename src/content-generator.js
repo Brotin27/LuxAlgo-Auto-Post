@@ -16,28 +16,38 @@ class ContentGenerator {
    * Validate a single Gemini API key with a tiny test call.
    */
   static async validateKey(apiKey) {
-    try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }],
-        generationConfig: { maxOutputTokens: 5 }
-      });
-      result.response.text();
-      return { valid: true };
-    } catch (error) {
-      const msg = error.message || '';
-      if (msg.includes('limit: 0') || msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
-        return { valid: false, error: 'Invalid or exhausted API key (zero quota)' };
-      }
-      if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    for (const modelName of models) {
+      try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }],
+          generationConfig: { maxOutputTokens: 5 }
+        });
+        result.response.text();
+        return { valid: true, model: modelName };
+      } catch (error) {
+        const msg = error.message || '';
+        if (msg.includes('API_KEY_INVALID') || msg.includes('API key not valid')) {
+          return { valid: false, error: 'Invalid API key' };
+        }
         if (msg.includes('limit: 0')) {
           return { valid: false, error: 'API key has zero quota — permanently unusable' };
         }
-        return { valid: true, error: 'Temporarily rate-limited (key is valid)' };
+        if (msg.includes('is not found') || msg.includes('not supported') || msg.includes('deprecated')) {
+          continue; // Try next model
+        }
+        if (msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+          return { valid: true, error: 'Temporarily rate-limited (key is valid)' };
+        }
+        // If last model, return error
+        if (modelName === models[models.length - 1]) {
+          return { valid: false, error: msg.substring(0, 150) };
+        }
       }
-      return { valid: false, error: msg.substring(0, 120) };
     }
+    return { valid: false, error: 'No compatible model found' };
   }
 
   /**
@@ -128,7 +138,7 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -266,7 +276,9 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
 
       const isPermanentlyDead = msg.includes('limit: 0')
         || msg.includes('API_KEY_INVALID')
-        || msg.includes('API key not valid');
+        || msg.includes('API key not valid')
+        || msg.includes('deprecated')
+        || msg.includes('is not found');
 
       if (isPermanentlyDead) {
         logger.error(`🔴 Key ...${apiKey.slice(-4)} is DEAD (zero quota / invalid) — removing from rotation`);
