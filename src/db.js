@@ -3,6 +3,7 @@ const logger = require('./logger');
 
 // ─── MongoDB Connection ────────────────────────────
 let isConnected = false;
+let reconnectTimer = null;
 
 async function connectDB(uri) {
   if (!uri) {
@@ -11,19 +12,65 @@ async function connectDB(uri) {
   }
 
   try {
+    mongoose.set('bufferCommands', false);
+
     await mongoose.connect(uri, {
       dbName: 'luxalgo_bot',
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      maxPoolSize: 5,
+      minPoolSize: 1,
+      retryWrites: true,
+      retryReads: true,
     });
+
     isConnected = true;
     logger.success('✅ MongoDB connected — data will persist across restarts');
+
+    // ─── Connection event handlers ─────────────────
+    mongoose.connection.on('disconnected', () => {
+      isConnected = false;
+      logger.warn('MongoDB disconnected — will auto-reconnect');
+      scheduleReconnect(uri);
+    });
+
+    mongoose.connection.on('error', (err) => {
+      logger.error(`MongoDB error: ${err.message}`);
+      if (!isConnected) scheduleReconnect(uri);
+    });
+
+    mongoose.connection.on('reconnected', () => {
+      isConnected = true;
+      logger.success('MongoDB reconnected ✓');
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    });
+
     return true;
   } catch (err) {
     logger.error(`MongoDB connection failed: ${err.message}`);
     logger.warn('Falling back to file-based storage (data may be lost on restart)');
+    scheduleReconnect(uri);
     return false;
   }
+}
+
+function scheduleReconnect(uri) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    logger.info('Attempting MongoDB reconnect...');
+    try {
+      await mongoose.connect(uri, {
+        dbName: 'luxalgo_bot',
+        serverSelectionTimeoutMS: 10000,
+      });
+      isConnected = true;
+      logger.success('MongoDB reconnected ✓');
+    } catch (err) {
+      logger.error(`MongoDB reconnect failed: ${err.message}`);
+      scheduleReconnect(uri); // Try again
+    }
+  }, 30000); // Retry every 30s
 }
 
 // ─── Schemas ───────────────────────────────────────
@@ -47,7 +94,6 @@ const configSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   minimize: false,
-  // Don't strip unknown fields
   strict: false,
 });
 
@@ -67,7 +113,6 @@ const postHistorySchema = new mongoose.Schema({
 
 // Indexes for performance
 postHistorySchema.index({ postedAt: -1 });
-postHistorySchema.index({ createdAt: -1 });
 
 const Config = mongoose.model('Config', configSchema);
 const PostHistory = mongoose.model('PostHistory', postHistorySchema);
@@ -182,10 +227,22 @@ async function seedHistory(entries) {
   }
 }
 
+/**
+ * Gracefully close MongoDB connection.
+ */
+async function disconnect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  try {
+    await mongoose.disconnect();
+    isConnected = false;
+  } catch { /* ignore */ }
+}
+
 // ─── Exports ──────────────────────────────────────
 
 module.exports = {
   connectDB,
+  disconnect,
   isConnected: () => isConnected,
   loadConfig,
   saveConfig,

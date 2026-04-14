@@ -1,8 +1,11 @@
 {
   "name": "luxalgo-telegram-bot",
-  "version": "1.0.0",
-  "description": "Automated LuxAlgo Telegram channel poster with beautiful dashboard",
+  "version": "2.0.0",
+  "description": "Automated LuxAlgo Telegram channel poster with beautiful dashboard & MongoDB persistence",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"

@@ -23,7 +23,7 @@ try {
 } catch (err) {
   logger.warn('config.json not found, constructing from template...');
   const templatePath = path.join(__dirname, 'config.example.json');
-  try { fs.copyFileSync(templatePath, CONFIG_PATH); } catch { /* Heroku might not allow writes */ }
+  try { fs.copyFileSync(templatePath, CONFIG_PATH); } catch { /* Heroku ephemeral FS */ }
   try { fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {
     fileConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.example.json'), 'utf8'));
   }
@@ -44,18 +44,15 @@ try { postHistory = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8')); } catch {
  * Save config to MongoDB (primary) + file (fallback).
  */
 function saveConfig() {
-  // Always try MongoDB first
   db.saveConfig(config).catch(() => {});
-  // Also try file (may fail on Heroku but works locally)
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2)); } catch { /* ignore */ }
+  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2)); } catch { /* Heroku */ }
 }
 
 /**
- * Save history to MongoDB (primary) + file (fallback).
+ * Save history to file (backup only — MongoDB is primary via addHistoryEntry).
  */
 function saveHistory() {
-  // File-based backup (may fail on Heroku)
-  try { fs.writeFileSync(HISTORY_PATH, JSON.stringify(postHistory.slice(0, 200), null, 2)); } catch { /* ignore */ }
+  try { fs.writeFileSync(HISTORY_PATH, JSON.stringify(postHistory.slice(0, 200), null, 2)); } catch { /* Heroku */ }
 }
 
 // ─── Initialize Components ─────────────────────────
@@ -72,7 +69,6 @@ scheduler.onHistoryUpdate = (entry) => {
   postHistory.unshift(entry);
   if (postHistory.length > 200) postHistory = postHistory.slice(0, 200);
   saveHistory();
-  // Persist to MongoDB
   db.addHistoryEntry(entry).catch(() => {});
 };
 bot.onManualPost = () => scheduler.manualPost();
@@ -84,14 +80,22 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Stable session secret (doesn't change when bot token is updated)
+const SESSION_SECRET = process.env.SESSION_SECRET || (config.botToken || 'luxalgo') + '-dash-v2';
 app.use(session({
-  secret: config.botToken + '-luxalgo-dash',
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 24 * 60 * 60 * 1000 }
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production' ? 'auto' : false,
+    httpOnly: true,
+    sameSite: 'lax',
+  }
 }));
 
-// Trust proxies for VPS (nginx/cloudflare)
+// Trust proxies for Heroku / nginx / cloudflare
 app.set('trust proxy', 1);
 
 function requireAuth(req, res, next) {
@@ -99,13 +103,46 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Unauthorized' });
 }
 
+// ─── Login Rate Limiting (brute-force protection) ──
+const loginAttempts = new Map(); // IP -> { count, lastAttempt }
+const MAX_LOGIN_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 min
+
+function checkLoginRateLimit(ip) {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
+  if (!record) return true;
+  if (now - record.lastAttempt > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(ip);
+    return true;
+  }
+  return record.count < MAX_LOGIN_ATTEMPTS;
+}
+
+function recordLoginAttempt(ip) {
+  const now = Date.now();
+  const record = loginAttempts.get(ip) || { count: 0, lastAttempt: now };
+  record.count++;
+  record.lastAttempt = now;
+  loginAttempts.set(ip, record);
+}
+
 // ─── Auth Routes ───────────────────────────────────
 app.post('/api/auth/login', (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  if (!checkLoginRateLimit(ip)) {
+    logger.warn(`Login rate-limited: ${ip}`);
+    return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  }
+
   if (req.body.password === config.dashboardPassword) {
     req.session.authenticated = true;
+    loginAttempts.delete(ip); // Reset on success
     logger.info('Dashboard login successful');
     return res.json({ success: true });
   }
+
+  recordLoginAttempt(ip);
   logger.warn('Dashboard login failed — wrong password');
   res.status(401).json({ error: 'Invalid password' });
 });
@@ -138,7 +175,8 @@ app.get('/api/status', requireAuth, (req, res) => {
     totalSuccess: summary.totalSuccess,
     totalErrors: summary.totalErrors,
     avgKeyHealth: summary.avgHealth,
-    channelCount: (config.channels || []).length
+    channelCount: (config.channels || []).length,
+    mongoConnected: db.isConnected(),
   });
 });
 
@@ -242,9 +280,6 @@ app.post('/api/keys/remove', requireAuth, (req, res) => {
   res.json({ success: true, stats: keyRotator.getStats() });
 });
 
-/**
- * Revive a dead key (e.g., user refreshed quota on Google Cloud)
- */
 app.post('/api/keys/revive', requireAuth, (req, res) => {
   const { key } = req.body;
   if (!key) return res.status(400).json({ error: 'Key is required' });
@@ -254,9 +289,6 @@ app.post('/api/keys/revive', requireAuth, (req, res) => {
   res.json({ success: true, stats: keyRotator.getStats() });
 });
 
-/**
- * Remove all dead/exhausted keys at once
- */
 app.post('/api/keys/clean-dead', requireAuth, (req, res) => {
   const removed = keyRotator.removeDeadKeys();
   for (const key of removed) {
@@ -289,7 +321,6 @@ app.post('/api/keys/validate', requireAuth, async (req, res) => {
       keyRotator.markDead(key);
       logger.error(`Key ...${key.slice(-4)} — DEAD: ${result.error}`);
     } else {
-      // If a previously dead key is now valid, revive it
       keyRotator.reviveKey(key);
       logger.success(`Key ...${key.slice(-4)} — VALID ✓`);
     }
@@ -346,13 +377,24 @@ app.get('/api/logs/stream', requireAuth, (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',  // Prevent nginx/Heroku from buffering SSE
   });
   res.write('data: {"type":"connected"}\n\n');
+
+  // Heartbeat every 25s to keep Heroku from killing the connection (30s timeout)
+  const heartbeat = setInterval(() => {
+    try { res.write('data: {"type":"heartbeat"}\n\n'); } catch { clearInterval(heartbeat); }
+  }, 25000);
+
   const unsub = logger.onLog(entry => {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    try { res.write(`data: ${JSON.stringify(entry)}\n\n`); } catch { /* client disconnected */ }
   });
-  req.on('close', unsub);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsub();
+  });
 });
 
 // ─── Post Actions ──────────────────────────────────
@@ -452,6 +494,17 @@ app.post('/api/users/remove', requireAuth, (req, res) => {
   res.json({ success: true, approvedUsers: config.approvedUsers });
 });
 
+// ─── Health Check (for Heroku / uptime monitors) ───
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    mongo: db.isConnected(),
+    keys: keyRotator.getAliveKeyCount(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ─── SPA Fallback ──────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -466,7 +519,6 @@ async function startApp() {
     // 2. Load config from MongoDB (overrides file-based)
     const dbConfig = await db.loadConfig(config);
     if (dbConfig) {
-      // Merge MongoDB config into our active config object
       Object.assign(config, dbConfig);
       logger.info('📦 Config loaded from MongoDB');
 
@@ -483,13 +535,12 @@ async function startApp() {
       postHistory = dbHistory;
       logger.info(`📜 ${postHistory.length} history entries loaded from MongoDB`);
     } else if (postHistory.length > 0) {
-      // Seed MongoDB with file-based history (first-time migration)
       await db.seedHistory(postHistory);
     }
   }
 
   // 4. Start Express server
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log('');
     console.log('  ╔══════════════════════════════════════════╗');
     console.log('  ║   🚀  LuxAlgo Telegram Bot Dashboard     ║');
@@ -521,7 +572,34 @@ async function startApp() {
   } else if (keyRotator.getKeyCount() === 0) {
     logger.warn('No Gemini API keys — add keys in dashboard to start auto-posting');
   }
+
+  // 7. Graceful shutdown
+  const shutdown = async (signal) => {
+    logger.info(`${signal} received — shutting down gracefully...`);
+    scheduler.stop();
+    bot.stop();
+    await db.disconnect();
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
+    // Force exit after 10s if graceful shutdown hangs
+    setTimeout(() => process.exit(1), 10000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
+
+// ─── Global Error Handlers ─────────────────────────
+process.on('unhandledRejection', (reason) => {
+  logger.error(`Unhandled rejection: ${reason?.message || reason}`);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error(`Uncaught exception: ${err.message}`);
+  // Don't exit — keep running for non-fatal errors
+});
 
 // Launch!
 startApp().catch(err => {
