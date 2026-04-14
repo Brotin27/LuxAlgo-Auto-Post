@@ -119,8 +119,22 @@ async function fetchStatus() {
     const d = await api('/status');
     $('#statTotal').textContent = d.totalPosts;
     $('#statToday').textContent = d.postsToday;
-    $('#statKeys').textContent = `${d.activeKeys}/${d.totalKeys}`;
     $('#statApiCalls').textContent = d.totalApiCalls;
+
+    // Enhanced key stats
+    const keyText = `${d.activeKeys}/${d.aliveKeys || d.totalKeys}`;
+    $('#statKeys').textContent = keyText;
+
+    // Show dead key warning
+    const deadBadge = $('#deadKeyWarning');
+    if (deadBadge) {
+      if (d.deadKeys > 0) {
+        deadBadge.textContent = `💀 ${d.deadKeys} dead`;
+        deadBadge.style.display = 'inline-block';
+      } else {
+        deadBadge.style.display = 'none';
+      }
+    }
 
     const dot = $('#statusDot');
     const label = $('#statusLabel');
@@ -264,36 +278,89 @@ $('#postModal').addEventListener('click', (e) => {
   if (e.target === $('#postModal')) $('#postModal').classList.remove('open');
 });
 
-// ─── API Keys ──────────────────────────────────────
+// ─── API Keys (Enhanced) ───────────────────────────
+function getHealthColor(health) {
+  if (health >= 80) return '#22c55e';
+  if (health >= 50) return '#f59e0b';
+  if (health >= 20) return '#f97316';
+  return '#ef4444';
+}
+
+function getStatusIcon(status) {
+  if (status === 'active') return '🟢';
+  if (status === 'rate_limited') return '🟡';
+  if (status === 'dead') return '💀';
+  return '⚪';
+}
+
+function formatCooldown(ms) {
+  if (ms <= 0) return '';
+  const secs = Math.ceil(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
 async function fetchKeys() {
   try {
     const keys = await api('/keys');
     const container = $('#keyList');
     const badge = $('#keyCountBadge');
 
-    badge.textContent = `${keys.length} key${keys.length !== 1 ? 's' : ''}`;
+    const alive = keys.filter(k => !k.isDead).length;
+    const dead = keys.filter(k => k.isDead).length;
+    badge.textContent = dead > 0
+      ? `${alive} alive / ${dead} dead`
+      : `${keys.length} key${keys.length !== 1 ? 's' : ''}`;
 
     if (keys.length === 0) {
-      container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔐</div><div class="empty-text">Add your first Gemini API key</div></div>`;
+      container.innerHTML = `<div class="empty-state"><div class="empty-icon">🔐</div><div class="empty-text">Add your first Gemini API key<br><small style="color:var(--text-muted)">Use bulk import to add many at once!</small></div></div>`;
       return;
     }
 
     const maxUsage = Math.max(...keys.map(k => k.usage), 1);
 
-    container.innerHTML = keys.map(k => `
-      <div class="key-item">
-        <div class="key-status-dot ${k.status}"></div>
-        <div class="key-name">${k.key}</div>
-        <div class="key-usage-bar">
-          <div class="key-usage-fill" style="width:${(k.usage / maxUsage) * 100}%"></div>
+    container.innerHTML = keys.map(k => {
+      const healthColor = getHealthColor(k.health);
+      const statusIcon = getStatusIcon(k.status);
+      const cooldownText = k.status === 'rate_limited' ? formatCooldown(k.cooldownRemaining) : '';
+
+      return `
+      <div class="key-item ${k.isDead ? 'key-dead' : ''}" style="${k.isDead ? 'opacity:0.6;' : ''}">
+        <div class="key-row-top">
+          <span class="key-status-icon">${statusIcon}</span>
+          <div class="key-name">${k.key}</div>
+          <div class="key-health-badge" style="background:${healthColor}20;color:${healthColor};border:1px solid ${healthColor}40" title="Health Score">
+            ${k.health}%
+          </div>
+          ${cooldownText ? `<div class="key-cooldown-badge" title="Rate limit cooldown">⏳ ${cooldownText}</div>` : ''}
+          ${k.isDead
+            ? `<button class="key-revive-btn" onclick="reviveKey('${k.fullKey}')" title="Revive this key">🔄</button>`
+            : ''
+          }
+          <button class="key-remove" onclick="removeKey('${k.fullKey}')" title="Remove key">×</button>
         </div>
-        <div class="key-usage-count">${k.usage}</div>
-        <button class="key-remove" onclick="removeKey('${k.fullKey}')" title="Remove key">×</button>
-      </div>
-    `).join('');
+        <div class="key-row-bottom">
+          <div class="key-usage-bar" title="Usage: ${k.usage} calls">
+            <div class="key-usage-fill" style="width:${(k.usage / maxUsage) * 100}%;background:${healthColor}"></div>
+          </div>
+          <div class="key-stats-mini">
+            <span title="Total calls">📊 ${k.usage}</span>
+            <span title="Successful" style="color:#22c55e">✓ ${k.successCount || 0}</span>
+            <span title="Errors" style="color:#ef4444">✗ ${k.errors}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Show/hide clean dead button
+    const cleanBtn = $('#cleanDeadBtn');
+    if (cleanBtn) {
+      cleanBtn.style.display = dead > 0 ? 'inline-flex' : 'none';
+    }
   } catch { /* silent */ }
 }
 
+// Single key add
 $('#addKeyBtn').addEventListener('click', async () => {
   const key = $('#newKeyInput').value.trim();
   if (!key) return toast('Paste an API key first', 'warning');
@@ -320,6 +387,42 @@ $('#newKeyInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('#addKeyBtn').click();
 });
 
+// Bulk import
+$('#bulkImportBtn')?.addEventListener('click', () => {
+  const area = $('#bulkImportArea');
+  area.style.display = area.style.display === 'none' ? 'block' : 'none';
+});
+
+$('#bulkAddBtn')?.addEventListener('click', async () => {
+  const keys = $('#bulkKeysInput')?.value?.trim();
+  if (!keys) return toast('Paste your API keys first', 'warning');
+
+  const btn = $('#bulkAddBtn');
+  const validate = $('#bulkValidateCheck')?.checked ?? false;
+  btn.textContent = validate ? '⏳ Adding & Validating...' : '⏳ Adding...';
+  btn.disabled = true;
+
+  try {
+    const result = await api('/keys/bulk-add', 'POST', { keys, validate });
+    const r = result.result;
+    let msg = `Added ${r.added} key(s)`;
+    if (r.duplicates > 0) msg += `, ${r.duplicates} duplicate(s) skipped`;
+    if (r.invalid > 0) msg += `, ${r.invalid} invalid`;
+    if (r.validated) msg += ` | Valid: ${r.validated.valid}, Invalid: ${r.validated.invalid}`;
+
+    toast(msg, r.added > 0 ? 'success' : 'warning');
+    $('#bulkKeysInput').value = '';
+    $('#bulkImportArea').style.display = 'none';
+    fetchKeys();
+    fetchStatus();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.textContent = '📥 Import All';
+    btn.disabled = false;
+  }
+});
+
 window.removeKey = async function(fullKey) {
   if (!confirm('Remove this API key?')) return;
   try {
@@ -332,7 +435,31 @@ window.removeKey = async function(fullKey) {
   }
 };
 
-// Validate All Keys — test each key and auto-remove invalid ones
+window.reviveKey = async function(fullKey) {
+  try {
+    await api('/keys/revive', 'POST', { key: fullKey });
+    toast('Key revived! Back in rotation 🔄', 'success');
+    fetchKeys();
+    fetchStatus();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+};
+
+// Clean all dead keys
+$('#cleanDeadBtn')?.addEventListener('click', async () => {
+  if (!confirm('Remove ALL dead/exhausted keys?')) return;
+  try {
+    const result = await api('/keys/clean-dead', 'POST');
+    toast(`Cleaned ${result.removedCount} dead key(s) 🧹`, 'success');
+    fetchKeys();
+    fetchStatus();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+});
+
+// Validate All Keys
 $('#validateKeysBtn').addEventListener('click', async () => {
   const btn = $('#validateKeysBtn');
   btn.innerHTML = '⏳ Checking...';

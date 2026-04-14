@@ -603,18 +603,18 @@ body::after {
   font-size: 1.2rem;
 }
 
-/* ─── API Keys Panel ────────────────────────────── */
+/* ─── API Keys Panel (Enhanced) ─────────────────── */
 .key-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .key-item {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
   background: rgba(255,255,255,0.015);
   border-radius: var(--radius-xs);
   border: 1px solid transparent;
@@ -623,28 +623,37 @@ body::after {
 
 .key-item:hover {
   border-color: var(--border);
+  background: rgba(255,255,255,0.025);
 }
 
-.key-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.key-item.key-dead {
+  border-color: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.03);
+}
+
+.key-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 24px;
+}
+
+.key-status-icon {
+  font-size: 0.75rem;
   flex-shrink: 0;
-}
-
-.key-status-dot.active {
-  background: var(--success);
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
-}
-
-.key-status-dot.rate_limited {
-  background: var(--error);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+  width: 16px;
+  text-align: center;
 }
 
 .key-name {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-secondary);
   flex: 1;
   overflow: hidden;
@@ -652,27 +661,66 @@ body::after {
   white-space: nowrap;
 }
 
+.key-health-badge {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.key-cooldown-badge {
+  font-size: 0.65rem;
+  color: var(--warning);
+  background: var(--warning-bg);
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  font-family: var(--mono);
+}
+
+.key-revive-btn {
+  background: none;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--info);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.key-revive-btn:hover {
+  background: var(--info-bg);
+  border-color: var(--info);
+}
+
 .key-usage-bar {
-  width: 80px;
-  height: 6px;
+  flex: 1;
+  height: 4px;
   background: rgba(255,255,255,0.06);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .key-usage-fill {
   height: 100%;
-  background: var(--gradient-main);
-  border-radius: 3px;
+  border-radius: 2px;
   transition: width 0.5s ease;
 }
 
-.key-usage-count {
+.key-stats-mini {
+  display: flex;
+  gap: 8px;
   font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  min-width: 30px;
-  text-align: right;
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.key-stats-mini span {
+  opacity: 0.8;
 }
 
 .key-remove {
@@ -684,6 +732,7 @@ body::after {
   padding: 4px;
   transition: color 0.2s;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .key-remove:hover { color: var(--error); }

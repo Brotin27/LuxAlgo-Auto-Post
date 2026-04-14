@@ -6,7 +6,7 @@
   <title>LuxAlgo Bot — Dashboard</title>
   <meta name="description" content="LuxAlgo Telegram Auto-Poster Bot Dashboard">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -140,20 +140,37 @@
 
     <!-- Right Column: API Keys + Live Logs -->
     <div>
-      <!-- API Keys -->
+      <!-- API Keys (Enhanced) -->
       <div class="card" style="margin-bottom:16px">
         <div class="card-header">
-          <div class="card-title">🔑 API Keys</div>
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="btn" id="validateKeysBtn" style="padding:5px 12px;font-size:0.75rem" title="Test all keys & remove invalid">🔍 Validate</button>
-            <span style="font-size:0.78rem;color:var(--text-muted)" id="keyCountBadge">0 keys</span>
+          <div class="card-title">🔑 API Keys <span id="deadKeyWarning" style="display:none;font-size:0.72rem;color:#ef4444;background:#ef444420;padding:2px 8px;border-radius:10px;margin-left:8px"></span></div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <button class="btn" id="bulkImportBtn" style="padding:5px 10px;font-size:0.72rem" title="Add multiple keys at once">📥 Bulk</button>
+            <button class="btn" id="validateKeysBtn" style="padding:5px 10px;font-size:0.72rem" title="Test all keys">🔍 Validate</button>
+            <button class="btn btn-danger" id="cleanDeadBtn" style="padding:5px 10px;font-size:0.72rem;display:none" title="Remove all dead keys">🧹 Clean Dead</button>
+            <span style="font-size:0.75rem;color:var(--text-muted)" id="keyCountBadge">0 keys</span>
           </div>
         </div>
         <div class="card-body">
+          <!-- Bulk Import Area (hidden by default) -->
+          <div id="bulkImportArea" style="display:none;margin-bottom:12px">
+            <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:6px">
+              Paste multiple API keys — one per line, comma-separated, or JSON array:
+            </div>
+            <textarea id="bulkKeysInput" rows="4" placeholder="AIzaSyXXXXXXXXX...&#10;AIzaSyYYYYYYYYY...&#10;AIzaSyZZZZZZZZZ..." style="width:100%;background:var(--card-bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px;font-family:var(--mono);font-size:0.78rem;resize:vertical"></textarea>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+              <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:var(--text-muted);cursor:pointer">
+                <input type="checkbox" id="bulkValidateCheck" checked> Validate each key
+              </label>
+              <div style="flex:1"></div>
+              <button class="btn btn-primary" id="bulkAddBtn" style="padding:6px 16px;font-size:0.78rem">📥 Import All</button>
+            </div>
+          </div>
+
           <div class="key-list" id="keyList">
             <div class="empty-state">
               <div class="empty-icon">🔐</div>
-              <div class="empty-text">Add your first Gemini API key</div>
+              <div class="empty-text">Add your first Gemini API key<br><small style="color:var(--text-muted)">Use bulk import to add many at once!</small></div>
             </div>
           </div>
           <div class="add-key-form">
@@ -317,6 +334,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

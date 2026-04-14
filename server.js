@@ -104,15 +104,22 @@ app.post('/api/auth/logout', (req, res) => {
 // ─── Status & Dashboard Data ───────────────────────
 app.get('/api/status', requireAuth, (req, res) => {
   const today = new Date().toDateString();
+  const summary = keyRotator.getSummary();
   res.json({
     botRunning: bot.isRunning,
     schedulerRunning: scheduler.isRunning,
     botEnabled: config.botEnabled,
     totalPosts: postHistory.length,
     postsToday: postHistory.filter(p => new Date(p.postedAt).toDateString() === today).length,
-    activeKeys: keyRotator.getActiveKeyCount(),
-    totalKeys: keyRotator.getKeyCount(),
-    totalApiCalls: keyRotator.getTotalUsage(),
+    activeKeys: summary.active,
+    aliveKeys: summary.alive,
+    deadKeys: summary.dead,
+    totalKeys: summary.total,
+    rateLimitedKeys: summary.rateLimited,
+    totalApiCalls: summary.totalUsage,
+    totalSuccess: summary.totalSuccess,
+    totalErrors: summary.totalErrors,
+    avgKeyHealth: summary.avgHealth,
     channelCount: (config.channels || []).length
   });
 });
@@ -129,6 +136,10 @@ app.get('/api/schedule', requireAuth, (req, res) => {
 // ─── API Key Management ────────────────────────────
 app.get('/api/keys', requireAuth, (req, res) => {
   res.json(keyRotator.getStats());
+});
+
+app.get('/api/keys/summary', requireAuth, (req, res) => {
+  res.json(keyRotator.getSummary());
 });
 
 app.post('/api/keys/add', requireAuth, async (req, res) => {
@@ -160,6 +171,49 @@ app.post('/api/keys/add', requireAuth, async (req, res) => {
   res.json({ success: true, stats: keyRotator.getStats() });
 });
 
+/**
+ * Bulk import: paste multiple keys at once (comma, newline, or JSON array)
+ */
+app.post('/api/keys/bulk-add', requireAuth, async (req, res) => {
+  const { keys, validate } = req.body;
+  if (!keys?.trim()) return res.status(400).json({ error: 'Keys input is required' });
+
+  logger.info('🔑 Bulk key import started...');
+  const result = keyRotator.addBulkKeys(keys);
+
+  // Optionally validate each new key
+  if (validate && result.added > 0) {
+    const newKeys = keyRotator.keys.slice(-result.added);
+    let validCount = 0;
+    let invalidCount = 0;
+
+    for (const key of newKeys) {
+      logger.info(`Validating ...${key.slice(-4)}...`);
+      const validation = await ContentGenerator.validateKey(key);
+      if (!validation.valid) {
+        logger.error(`Key ...${key.slice(-4)} INVALID: ${validation.error}`);
+        keyRotator.markDead(key);
+        invalidCount++;
+      } else {
+        logger.success(`Key ...${key.slice(-4)} VALID ✓`);
+        validCount++;
+      }
+    }
+
+    result.validated = { valid: validCount, invalid: invalidCount };
+  }
+
+  config.geminiKeys = [...keyRotator.keys];
+  saveConfig();
+
+  if (keyRotator.getAliveKeyCount() > 0 && config.botEnabled && !scheduler.isRunning) {
+    scheduler.start();
+  }
+
+  logger.success(`Bulk import: ${result.added} added, ${result.duplicates} duplicates, ${result.invalid} invalid`);
+  res.json({ success: true, result, stats: keyRotator.getStats(), summary: keyRotator.getSummary() });
+});
+
 app.post('/api/keys/remove', requireAuth, (req, res) => {
   const { key } = req.body;
   keyRotator.removeKey(key);
@@ -170,6 +224,32 @@ app.post('/api/keys/remove', requireAuth, (req, res) => {
   res.json({ success: true, stats: keyRotator.getStats() });
 });
 
+/**
+ * Revive a dead key (e.g., user refreshed quota on Google Cloud)
+ */
+app.post('/api/keys/revive', requireAuth, (req, res) => {
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: 'Key is required' });
+  keyRotator.reviveKey(key);
+  contentGenerator.invalidKeys.delete(key);
+  logger.info(`🔄 Key ...${key.slice(-4)} revived — back in rotation`);
+  res.json({ success: true, stats: keyRotator.getStats() });
+});
+
+/**
+ * Remove all dead/exhausted keys at once
+ */
+app.post('/api/keys/clean-dead', requireAuth, (req, res) => {
+  const removed = keyRotator.removeDeadKeys();
+  for (const key of removed) {
+    contentGenerator.invalidKeys.delete(key);
+  }
+  config.geminiKeys = [...keyRotator.keys];
+  saveConfig();
+  logger.info(`🧹 Cleaned ${removed.length} dead key(s)`);
+  res.json({ success: true, removedCount: removed.length, stats: keyRotator.getStats() });
+});
+
 app.post('/api/keys/validate', requireAuth, async (req, res) => {
   if (keyRotator.getKeyCount() === 0) {
     return res.json({ message: 'No keys to validate', results: [] });
@@ -177,7 +257,7 @@ app.post('/api/keys/validate', requireAuth, async (req, res) => {
 
   logger.info('Validating all API keys...');
   const results = [];
-  const keysToRemove = [];
+  const deadKeys = [];
 
   for (const key of [...keyRotator.keys]) {
     logger.info(`Testing key ...${key.slice(-4)}...`);
@@ -187,28 +267,24 @@ app.post('/api/keys/validate', requireAuth, async (req, res) => {
       fullKey: key, valid: result.valid, error: result.error || null
     });
     if (!result.valid) {
-      keysToRemove.push(key);
-      logger.error(`Key ...${key.slice(-4)} — INVALID: ${result.error}`);
+      deadKeys.push(key);
+      keyRotator.markDead(key);
+      logger.error(`Key ...${key.slice(-4)} — DEAD: ${result.error}`);
     } else {
+      // If a previously dead key is now valid, revive it
+      keyRotator.reviveKey(key);
       logger.success(`Key ...${key.slice(-4)} — VALID ✓`);
     }
   }
 
-  for (const key of keysToRemove) {
-    keyRotator.removeKey(key);
-    contentGenerator.invalidKeys.delete(key);
-  }
-  if (keysToRemove.length > 0) {
-    config.geminiKeys = [...keyRotator.keys];
-    saveConfig();
-    logger.warn(`Removed ${keysToRemove.length} invalid key(s)`);
-  }
+  config.geminiKeys = [...keyRotator.keys];
+  saveConfig();
 
   const validCount = results.filter(r => r.valid).length;
-  logger.info(`Validation complete: ${validCount}/${results.length} keys valid`);
+  logger.info(`Validation complete: ${validCount}/${results.length} keys valid, ${deadKeys.length} dead`);
   res.json({
-    message: `${validCount} of ${results.length} keys are valid. ${keysToRemove.length} invalid key(s) removed.`,
-    results, stats: keyRotator.getStats()
+    message: `${validCount} of ${results.length} keys are valid. ${deadKeys.length} key(s) marked dead.`,
+    results, stats: keyRotator.getStats(), summary: keyRotator.getSummary()
   });
 });
 

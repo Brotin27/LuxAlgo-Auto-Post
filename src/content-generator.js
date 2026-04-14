@@ -8,7 +8,7 @@ class ContentGenerator {
   constructor(keyRotator) {
     this.keyRotator = keyRotator;
     this.retryCount = 0;
-    this.maxRetries = 3;
+    this.maxRetries = 5; // increased from 3 — more keys = more retries make sense
     this.invalidKeys = new Set();
   }
 
@@ -18,7 +18,7 @@ class ContentGenerator {
   static async validateKey(apiKey) {
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }],
         generationConfig: { maxOutputTokens: 5 }
@@ -41,29 +41,33 @@ class ContentGenerator {
   }
 
   /**
+   * Smart delay calculation based on retry attempt.
+   * Exponential backoff: 2s, 4s, 8s, 16s, 30s max
+   */
+  _getRetryDelay(attempt) {
+    return Math.min(2000 * Math.pow(2, attempt - 1), 30000);
+  }
+
+  /**
    * Generate a rich, formatted Telegram post with optional image.
    */
   async generatePost(affiliateLink = '', affiliateEnabled = false, templateId = null, imageEnabled = false) {
     const apiKey = this.keyRotator.getNextKey();
     if (!apiKey) {
-      throw new Error('No API keys available. Add Gemini API keys in the dashboard.');
-    }
-
-    if (this.invalidKeys.has(apiKey)) {
-      logger.warn(`Skipping known-invalid key ...${apiKey.slice(-4)}`);
-      this.keyRotator.markRateLimited(apiKey, 999999999);
-      if (this.retryCount < this.maxRetries) {
-        this.retryCount++;
-        return this.generatePost(affiliateLink, affiliateEnabled, templateId, imageEnabled);
+      const deadCount = this.keyRotator.getDeadKeyCount();
+      const totalCount = this.keyRotator.getKeyCount();
+      if (deadCount > 0 && deadCount === totalCount) {
+        throw new Error(`All ${totalCount} API keys are dead/exhausted. Add new valid Gemini API keys in the dashboard.`);
       }
-      this.retryCount = 0;
-      throw new Error('All API keys are invalid. Please add valid Gemini API keys.');
+      throw new Error('No API keys available. Add Gemini API keys in the dashboard.');
     }
 
     const template = getRandomTemplate(templateId);
     const prompt = getRandomPrompt(template);
 
-    logger.info(`Generating: ${template.emoji} ${template.name} | Key: ...${apiKey.slice(-4)}`);
+    const aliveCount = this.keyRotator.getAliveKeyCount();
+    const activeCount = this.keyRotator.getActiveKeyCount();
+    logger.info(`Generating: ${template.emoji} ${template.name} | Key: ...${apiKey.slice(-4)} | Keys: ${activeCount}/${aliveCount} active`);
 
     const systemInstruction = `You are a professional crypto and trading content creator for a Telegram channel focused on LuxAlgo (luxalgo.com) — the #1 AI algorithmic trading platform for TradingView.
 
@@ -124,7 +128,7 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
       const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -240,6 +244,8 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
         }
       }
 
+      // Mark success on the key
+      this.keyRotator.markSuccess(apiKey);
       this.retryCount = 0;
       logger.success(`Content ready (${text.length} chars) — ${template.name}`);
 
@@ -263,23 +269,26 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
         || msg.includes('API key not valid');
 
       if (isPermanentlyDead) {
-        logger.error(`Key ...${apiKey.slice(-4)} is INVALID (zero quota) — marking for removal`);
+        logger.error(`🔴 Key ...${apiKey.slice(-4)} is DEAD (zero quota / invalid) — removing from rotation`);
         this.invalidKeys.add(apiKey);
-        this.keyRotator.markRateLimited(apiKey, 999999999);
+        this.keyRotator.markDead(apiKey);
 
-        if (this.retryCount < this.maxRetries) {
+        const alive = this.keyRotator.getAliveKeyCount();
+        if (alive > 0 && this.retryCount < this.maxRetries) {
           this.retryCount++;
+          logger.warn(`↻ Trying next key... (${alive} alive keys remaining)`);
           return this.generatePost(affiliateLink, affiliateEnabled, templateId, imageEnabled);
         }
         this.retryCount = 0;
-        throw new Error('All API keys are invalid or exhausted. Add new valid keys in the dashboard.');
+        throw new Error(`All API keys are dead/exhausted (${this.keyRotator.getDeadKeyCount()} dead). Add new valid keys in the dashboard.`);
       }
 
       if (is429 && this.retryCount < this.maxRetries) {
         this.retryCount++;
-        logger.warn(`Key ...${apiKey.slice(-4)} temporarily rate-limited — rotating (attempt ${this.retryCount}/${this.maxRetries})`);
-        this.keyRotator.markRateLimited(apiKey, 65000);
-        await new Promise(r => setTimeout(r, 2000));
+        const cooldown = this.keyRotator.markRateLimited(apiKey);
+        const delay = this._getRetryDelay(this.retryCount);
+        logger.warn(`⏳ Key ...${apiKey.slice(-4)} rate-limited (cooldown: ${Math.round(cooldown/1000)}s) — retry ${this.retryCount}/${this.maxRetries} in ${Math.round(delay/1000)}s`);
+        await new Promise(r => setTimeout(r, delay));
         return this.generatePost(affiliateLink, affiliateEnabled, templateId, imageEnabled);
       }
 
