@@ -578,6 +578,7 @@ async function loadSettings() {
     const s = await api('/settings');
 
     $('#settingBotToken').value = s.botToken || '';
+    $('#settingGroqKey').value = s.groqKey || '';
     $('#settingPostsPerDay').value = s.postsPerDay || 4;
     $('#settingTimezone').value = s.timezone || 'America/New_York';
     $('#settingStartHour').value = s.postStartHour ?? 9;
@@ -714,7 +715,8 @@ $('#saveSettingsBtn').addEventListener('click', async () => {
       affiliateLink: $('#settingAffiliateLink').value.trim(),
       affiliateEnabled: $('#settingAffiliateToggle').classList.contains('active'),
       imageEnabled: $('#settingImageToggle').classList.contains('active'),
-      dashboardPassword: $('#settingPassword').value.trim() || 'luxalgo'
+      dashboardPassword: $('#settingPassword').value.trim() || 'luxalgo',
+      groqKey: $('#settingGroqKey').value.trim(),
     };
 
     await api('/settings', 'POST', settings);

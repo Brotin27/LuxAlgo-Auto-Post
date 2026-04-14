@@ -59,7 +59,7 @@ function saveHistory() {
 const keyRotator = new KeyRotator();
 config.geminiKeys.forEach(k => keyRotator.addKey(k));
 
-const contentGenerator = new ContentGenerator(keyRotator);
+const contentGenerator = new ContentGenerator(keyRotator, config);
 const bot = new Bot(config);
 const scheduler = new Scheduler(config, contentGenerator, bot);
 
@@ -444,14 +444,15 @@ app.get('/api/settings', requireAuth, (req, res) => {
     approvedUsers: config.approvedUsers,
     ownerId: config.ownerId,
     dashboardPassword: config.dashboardPassword,
-    botToken: config.botToken
+    botToken: config.botToken,
+    groqKey: config.groqKey || '',
   });
 });
 
 app.post('/api/settings', requireAuth, (req, res) => {
   const allowed = [
     'postsPerDay', 'timezone', 'postStartHour', 'postEndHour',
-    'affiliateLink', 'affiliateEnabled', 'imageEnabled', 'dashboardPassword', 'botToken'
+    'affiliateLink', 'affiliateEnabled', 'imageEnabled', 'dashboardPassword', 'botToken', 'groqKey'
   ];
 
   let scheduleChanged = false;

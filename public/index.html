@@ -6,7 +6,7 @@
   <title>LuxAlgo Bot — Dashboard</title>
   <meta name="description" content="LuxAlgo Telegram Auto-Poster Bot Dashboard">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 
@@ -296,6 +296,21 @@
     </div>
   </div>
 
+  <!-- AI Providers (Groq Fallback) -->
+  <div class="settings-section">
+    <div class="settings-section-title">🤖 AI Providers</div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Groq API Key <span style="font-size:0.7rem;color:var(--success);background:var(--success-bg);padding:2px 8px;border-radius:8px;margin-left:6px">FREE</span></div>
+        <div class="setting-desc">Fallback AI when Gemini keys are exhausted. Get free key at <a href="https://console.groq.com" target="_blank" style="color:var(--accent-3)">console.groq.com</a></div>
+      </div>
+    </div>
+    <input type="text" id="settingGroqKey" class="setting-input" placeholder="gsk_xxxxxxxxxxxxxxxxxxxx" style="font-family:var(--mono);font-size:0.82rem">
+    <div style="margin-top:6px;font-size:0.72rem;color:var(--text-muted)">
+      ⚡ Groq = Llama 3.3 70B | 14,400 free requests/day | Auto-fallback when Gemini fails
+    </div>
+  </div>
+
   <!-- Access Control -->
   <div class="settings-section">
     <div class="settings-section-title">Access Control</div>
@@ -334,6 +349,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

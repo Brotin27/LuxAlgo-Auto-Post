@@ -91,6 +91,7 @@ const configSchema = new mongoose.Schema({
   affiliateEnabled: { type: Boolean, default: false },
   imageEnabled: { type: Boolean, default: false },
   botEnabled: { type: Boolean, default: true },
+  groqKey: { type: String, default: '' },
 }, {
   timestamps: true,
   minimize: false,

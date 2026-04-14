@@ -5,11 +5,13 @@ const https = require('https');
 const http = require('http');
 
 class ContentGenerator {
-  constructor(keyRotator) {
+  constructor(keyRotator, config) {
     this.keyRotator = keyRotator;
+    this.config = config; // Reference to live config (for groqKey)
     this.retryCount = 0;
-    this.maxRetries = 5; // increased from 3 — more keys = more retries make sense
+    this.maxRetries = 5;
     this.invalidKeys = new Set();
+    this.groqModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
   }
 
   /**
@@ -79,62 +81,7 @@ class ContentGenerator {
     const activeCount = this.keyRotator.getActiveKeyCount();
     logger.info(`Generating: ${template.emoji} ${template.name} | Key: ...${apiKey.slice(-4)} | Keys: ${activeCount}/${aliveCount} active`);
 
-    const systemInstruction = `You are a professional crypto and trading content creator for a Telegram channel focused on LuxAlgo (luxalgo.com) — the #1 AI algorithmic trading platform for TradingView.
-
-You write beautifully formatted, visually stunning Telegram posts using HTML formatting and decorative Unicode symbols.
-
-FORMAT RULES (VERY IMPORTANT — FOLLOW EXACTLY):
-- Use Telegram HTML tags: <b>bold</b>, <i>italic</i>, <blockquote>quote blocks</blockquote>
-- Use these decorative Unicode symbols for section headers and bullets:
-  ✦ ◈ ⟐ ⊹ ❋ ✧ ➤ ▸ ◆ ❖ ⟡ ✴ ⚡ 🔹 ◉ ═══
-- Use arrow symbols for key-value pairs: →  ⟶  ⇒
-- Use line dividers like: ━━━━━━━━━━━ or ═══════════ or ┈┈┈┈┈┈┈┈┈┈
-- Make section titles bold with a decorative icon: ✦ <b>Section Title</b>
-- Put key definitions, facts, or quotes inside <blockquote>text</blockquote>
-- Use blank lines between sections for clean spacing
-- Put important terms or highlights in <b>bold</b>
-- Use <i>italic</i> for emphasis on philosophical or summary lines
-- End with an inspiring or thought-provoking summary line using a special emoji
-- Include 3-5 hashtags at the very end on a new line
-
-STRUCTURE TEMPLATE (follow this pattern):
-[Emoji] <b>[Catchy Title]</b>
-
-[Decorative divider line]
-
-✦ <b>[Section 1 Header]:</b>
-
-<blockquote>[Key insight or definition with → arrow for explanation]</blockquote>
-
-◈ <b>[Section 2 Header]:</b>
-
-<blockquote>[Another key point using → symbol]</blockquote>
-
-⊹ <b>[Section 3 Header]:</b>
-
-<blockquote>[Detail with → arrow]</blockquote>
-
-[Special emoji] <i>[Final summary/takeaway line that's memorable]</i>
-
-#Hashtag1 #Hashtag2 #Hashtag3
-
-CONTENT RULES:
-- Write in very simple, easy-to-understand English
-- Avoid overly complex or complicated trading jargon
-- Explain things in a way a beginner could easily understand
-- Use emojis strategically (6-10 per post for visual appeal)
-- Sound knowledgeable, confident, authentic — NOT salesy
-- Focus on educating and providing genuine value
-- Mention LuxAlgo naturally in context
-- Keep each section concise (1-3 lines)
-- Make it scannable — readers should get value at a glance
-- NEVER output raw markdown (**bold** or ##headers) — ONLY HTML tags
-${affiliateEnabled && affiliateLink
-  ? `- End before hashtags with: ➤ <b>Try LuxAlgo here:</b> ${affiliateLink}`
-  : '- Naturally mention luxalgo.com at the end before hashtags'}
-
-${imageEnabled ? `\nIMAGE PROMPT:
-After the post content, add a line that starts with exactly "IMAGE_PROMPT:" followed by a short image generation prompt (10-20 words) describing a suitable crypto/trading/tech themed image for this post. This should be a high-quality visual description for AI image generation. Do NOT include IMAGE_PROMPT inside the main post content.` : ''}`;
+    const systemInstruction = this._buildSystemPrompt(affiliateLink, affiliateEnabled, imageEnabled);
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
@@ -152,121 +99,10 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
 
       let text = result.response.text();
 
-      // ─── HTML Sanitizer for Telegram ───────────────────
-      // Remove markdown leftovers
-      text = text.replace(/\*\*/g, '').replace(/##/g, '').replace(/__/g, '').replace(/```/g, '');
-
-      // Convert <strong>/<em> to <b>/<i>
-      text = text.replace(/<strong[^>]*>/gi, '<b>').replace(/<\/strong>/gi, '</b>');
-      text = text.replace(/<em[^>]*>/gi, '<i>').replace(/<\/em>/gi, '</i>');
-      text = text.replace(/<br\s*\/?>/gi, '\n');
-
-      // Strip ALL unsupported HTML tags (keep only: b, i, u, s, code, pre, blockquote, a)
-      text = text.replace(/<\/?(h[1-6]|p|div|span|hr|ul|ol|li|table|tr|td|th|img|figure|figcaption|section|article|header|footer|nav|main|aside|details|summary)[^>]*>/gi, '');
-
-      // ─── Stack-based tag fixer ───
-      // Telegram requires PERFECT nesting. <blockquote><b>text</blockquote></b> is INVALID.
-      // Must be: <blockquote><b>text</b></blockquote>
-      const allowedTags = new Set(['b', 'i', 'u', 's', 'code', 'pre', 'blockquote', 'a']);
-
-      function fixHtmlNesting(html) {
-        const tagRegex = /<\/?([a-z][a-z0-9]*)[^>]*>/gi;
-        const stack = [];
-        let result = '';
-        let lastIndex = 0;
-
-        let match;
-        while ((match = tagRegex.exec(html)) !== null) {
-          const fullTag = match[0];
-          const tagName = match[1].toLowerCase();
-          const isClosing = fullTag[1] === '/';
-          const pos = match.index;
-
-          // Add text before this tag
-          result += html.substring(lastIndex, pos);
-          lastIndex = pos + fullTag.length;
-
-          if (!allowedTags.has(tagName)) {
-            // Skip unsupported tags entirely
-            continue;
-          }
-
-          if (!isClosing) {
-            // Opening tag
-            stack.push(tagName);
-            result += fullTag;
-          } else {
-            // Closing tag — find matching open tag
-            const openIdx = stack.lastIndexOf(tagName);
-            if (openIdx === -1) {
-              // No matching open tag — skip this closing tag
-              continue;
-            }
-            // Close any tags that are open AFTER the matching open tag (fix nesting)
-            const tagsToClose = stack.splice(openIdx);
-            // Close them in reverse order (innermost first)
-            for (let i = tagsToClose.length - 1; i >= 1; i--) {
-              result += `</${tagsToClose[i]}>`;
-            }
-            result += `</${tagName}>`;
-            // Re-open the tags we had to force-close (except the one we just closed)
-            for (let i = 1; i < tagsToClose.length; i++) {
-              result += `<${tagsToClose[i]}>`;
-              stack.push(tagsToClose[i]);
-            }
-          }
-        }
-
-        // Add remaining text
-        result += html.substring(lastIndex);
-
-        // Close any remaining unclosed tags
-        while (stack.length > 0) {
-          result += `</${stack.pop()}>`;
-        }
-
-        return result;
-      }
-
-      text = fixHtmlNesting(text);
-
-      // Fix nested blockquotes (Telegram doesn't support them)
-      text = text.replace(/<blockquote>\s*<blockquote>/g, '<blockquote>');
-      text = text.replace(/<\/blockquote>\s*<\/blockquote>/g, '</blockquote>');
-
-      // Escape ampersands that aren't HTML entities
-      text = text.replace(/&(?!amp;|lt;|gt;|quot;|#\d+;)/g, '&amp;');
-
-      // Clean excessive blank lines
-      text = text.replace(/\n{4,}/g, '\n\n\n');
-
-      // Extract image prompt if present
-      let imagePrompt = null;
-      let imageUrl = null;
-
-      if (imageEnabled) {
-        const imgMatch = text.match(/IMAGE_PROMPT:\s*(.+)/i);
-        if (imgMatch) {
-          imagePrompt = imgMatch[1].trim();
-          text = text.replace(/\n?IMAGE_PROMPT:\s*.+/i, '').trim();
-          imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt + ', digital art, crypto trading theme, dark background, premium quality, 4k, vibrant neon colors')}?width=1024&height=576&nologo=true`;
-          logger.info(`Image prompt: ${imagePrompt}`);
-        }
-      }
-
       // Mark success on the key
       this.keyRotator.markSuccess(apiKey);
       this.retryCount = 0;
-      logger.success(`Content ready (${text.length} chars) — ${template.name}`);
-
-      return {
-        content: text.trim(),
-        template: `${template.emoji} ${template.name}`,
-        templateId: template.id,
-        generatedAt: new Date().toISOString(),
-        imageUrl: imageUrl,
-        imagePrompt: imagePrompt
-      };
+      return this._postProcess(text, template, imageEnabled, 'gemini');
     } catch (error) {
       const msg = error.message || '';
       const is429 = error.status === 429
@@ -288,11 +124,13 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
         const alive = this.keyRotator.getAliveKeyCount();
         if (alive > 0 && this.retryCount < this.maxRetries) {
           this.retryCount++;
-          logger.warn(`↻ Trying next key... (${alive} alive keys remaining)`);
+          logger.warn(`↻ Trying next Gemini key... (${alive} alive keys remaining)`);
           return this.generatePost(affiliateLink, affiliateEnabled, templateId, imageEnabled);
         }
+
+        // All Gemini keys dead — try Groq fallback
         this.retryCount = 0;
-        throw new Error(`All API keys are dead/exhausted (${this.keyRotator.getDeadKeyCount()} dead). Add new valid keys in the dashboard.`);
+        return this._tryGroqFallback(affiliateLink, affiliateEnabled, templateId, imageEnabled);
       }
 
       if (is429 && this.retryCount < this.maxRetries) {
@@ -304,10 +142,209 @@ After the post content, add a line that starts with exactly "IMAGE_PROMPT:" foll
         return this.generatePost(affiliateLink, affiliateEnabled, templateId, imageEnabled);
       }
 
+      // Generic error — try Groq as last resort
       this.retryCount = 0;
-      logger.error(`Generation failed: ${msg.substring(0, 200)}`);
-      throw error;
+      logger.error(`Gemini failed: ${msg.substring(0, 150)}`);
+      return this._tryGroqFallback(affiliateLink, affiliateEnabled, templateId, imageEnabled);
     }
+  }
+
+  /**
+   * Try Groq as fallback when all Gemini keys are exhausted.
+   */
+  async _tryGroqFallback(affiliateLink, affiliateEnabled, templateId, imageEnabled) {
+    const groqKey = this.config?.groqKey;
+    if (!groqKey) {
+      throw new Error('All Gemini keys exhausted and no Groq API key configured. Add a Groq key in Settings → AI Providers.');
+    }
+
+    logger.info('🔄 Switching to Groq fallback...');
+    return this._generateWithGroq(groqKey, affiliateLink, affiliateEnabled, templateId, imageEnabled);
+  }
+
+  /**
+   * Generate content using Groq API (OpenAI-compatible).
+   */
+  async _generateWithGroq(groqKey, affiliateLink, affiliateEnabled, templateId, imageEnabled) {
+    const template = getRandomTemplate(templateId);
+    const prompt = getRandomPrompt(template);
+    const systemPrompt = this._buildSystemPrompt(affiliateLink, affiliateEnabled, imageEnabled);
+
+    let lastError = null;
+
+    for (const modelName of this.groqModels) {
+      try {
+        logger.info(`🤖 Groq: ${template.emoji} ${template.name} | Model: ${modelName}`);
+
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${groqKey}`,
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.9,
+            max_tokens: 1500,
+            top_p: 0.95,
+          }),
+        });
+
+        if (!response.ok) {
+          const errBody = await response.text();
+          if (response.status === 429) {
+            logger.warn(`Groq ${modelName} rate-limited, trying next model...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          throw new Error(`Groq API ${response.status}: ${errBody.substring(0, 150)}`);
+        }
+
+        const data = await response.json();
+        let text = data.choices?.[0]?.message?.content || '';
+
+        if (!text || text.length < 50) {
+          logger.warn(`Groq ${modelName} returned short response, trying next...`);
+          continue;
+        }
+
+        logger.success(`✅ Groq generated content (${text.length} chars) via ${modelName}`);
+        return this._postProcess(text, template, imageEnabled, 'groq');
+
+      } catch (err) {
+        lastError = err;
+        logger.warn(`Groq ${modelName} failed: ${err.message?.substring(0, 100)}`);
+      }
+    }
+
+    throw lastError || new Error('All Groq models failed. Check your Groq API key.');
+  }
+
+  /**
+   * Build the system prompt (shared between Gemini and Groq).
+   */
+  _buildSystemPrompt(affiliateLink, affiliateEnabled, imageEnabled) {
+    return `You are a professional crypto and trading content creator for a Telegram channel focused on LuxAlgo (luxalgo.com) — the #1 AI algorithmic trading platform for TradingView.
+
+You write beautifully formatted, visually stunning Telegram posts using HTML formatting and decorative Unicode symbols.
+
+FORMAT RULES (VERY IMPORTANT — FOLLOW EXACTLY):
+- Use Telegram HTML tags: <b>bold</b>, <i>italic</i>, <blockquote>quote blocks</blockquote>
+- Use these decorative Unicode symbols for section headers and bullets:
+  ✦ ◈ ⟐ ⊹ ❋ ✧ ➤ ▸ ◆ ❖ ⟡ ✴ ⚡ 🔹 ◉ ═══
+- Use arrow symbols for key-value pairs: →  ⟶  ⇒
+- Use line dividers like: ━━━━━━━━━━━ or ═══════════ or ┈┈┈┈┈┈┈┈┈┈
+- Make section titles bold with a decorative icon: ✦ <b>Section Title</b>
+- Put key definitions, facts, or quotes inside <blockquote>text</blockquote>
+- Use blank lines between sections for clean spacing
+- Put important terms or highlights in <b>bold</b>
+- Use <i>italic</i> for emphasis on philosophical or summary lines
+- End with an inspiring or thought-provoking summary line using a special emoji
+- Include 3-5 hashtags at the very end on a new line
+
+CONTENT RULES:
+- Write in very simple, easy-to-understand English
+- Avoid overly complex trading jargon
+- Use emojis strategically (6-10 per post)
+- Sound knowledgeable, confident, authentic — NOT salesy
+- Mention LuxAlgo naturally in context
+- Keep sections concise (1-3 lines)
+- NEVER output raw markdown (**bold** or ##headers) — ONLY HTML tags
+${affiliateEnabled && affiliateLink
+  ? `- End before hashtags with: ➤ <b>Try LuxAlgo here:</b> ${affiliateLink}`
+  : '- Naturally mention luxalgo.com at the end before hashtags'}
+${imageEnabled ? `\nIMAGE PROMPT:
+After the post content, add a line starting with exactly "IMAGE_PROMPT:" followed by a short image generation prompt (10-20 words) describing a suitable crypto/trading themed image.` : ''}`;
+  }
+
+  /**
+   * Post-process generated text: sanitize HTML, extract image prompt, etc.
+   */
+  _postProcess(text, template, imageEnabled, provider = 'gemini') {
+    // ─── HTML Sanitizer for Telegram ───────────────────
+    text = text.replace(/\*\*/g, '').replace(/##/g, '').replace(/__/g, '').replace(/```/g, '');
+    text = text.replace(/<strong[^>]*>/gi, '<b>').replace(/<\/strong>/gi, '</b>');
+    text = text.replace(/<em[^>]*>/gi, '<i>').replace(/<\/em>/gi, '</i>');
+    text = text.replace(/<br\s*\/?>/gi, '\n');
+    text = text.replace(/<\/?(h[1-6]|p|div|span|hr|ul|ol|li|table|tr|td|th|img|figure|figcaption|section|article|header|footer|nav|main|aside|details|summary)[^>]*>/gi, '');
+
+    // ─── Stack-based tag fixer ───
+    const allowedTags = new Set(['b', 'i', 'u', 's', 'code', 'pre', 'blockquote', 'a']);
+
+    function fixHtmlNesting(html) {
+      const tagRegex = /<\/?([a-z][a-z0-9]*)[^>]*>/gi;
+      const stack = [];
+      let result = '';
+      let lastIndex = 0;
+      let match;
+
+      while ((match = tagRegex.exec(html)) !== null) {
+        const fullTag = match[0];
+        const tagName = match[1].toLowerCase();
+        const isClosing = fullTag[1] === '/';
+        const pos = match.index;
+
+        result += html.substring(lastIndex, pos);
+        lastIndex = pos + fullTag.length;
+
+        if (!allowedTags.has(tagName)) continue;
+
+        if (!isClosing) {
+          stack.push(tagName);
+          result += fullTag;
+        } else {
+          const openIdx = stack.lastIndexOf(tagName);
+          if (openIdx === -1) continue;
+          const tagsToClose = stack.splice(openIdx);
+          for (let i = tagsToClose.length - 1; i >= 1; i--) result += `</${tagsToClose[i]}>`;
+          result += `</${tagName}>`;
+          for (let i = 1; i < tagsToClose.length; i++) {
+            result += `<${tagsToClose[i]}>`;
+            stack.push(tagsToClose[i]);
+          }
+        }
+      }
+
+      result += html.substring(lastIndex);
+      while (stack.length > 0) result += `</${stack.pop()}>`;
+      return result;
+    }
+
+    text = fixHtmlNesting(text);
+    text = text.replace(/<blockquote>\s*<blockquote>/g, '<blockquote>');
+    text = text.replace(/<\/blockquote>\s*<\/blockquote>/g, '</blockquote>');
+    text = text.replace(/&(?!amp;|lt;|gt;|quot;|#\d+;)/g, '&amp;');
+    text = text.replace(/\n{4,}/g, '\n\n\n');
+
+    // Extract image prompt if present
+    let imagePrompt = null;
+    let imageUrl = null;
+
+    if (imageEnabled) {
+      const imgMatch = text.match(/IMAGE_PROMPT:\s*(.+)/i);
+      if (imgMatch) {
+        imagePrompt = imgMatch[1].trim();
+        text = text.replace(/\n?IMAGE_PROMPT:\s*.+/i, '').trim();
+        imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt + ', digital art, crypto trading theme, dark background, premium quality, 4k, vibrant neon colors')}?width=1024&height=576&nologo=true`;
+        logger.info(`Image prompt: ${imagePrompt}`);
+      }
+    }
+
+    logger.success(`Content ready (${text.length} chars) via ${provider} — ${template.name}`);
+
+    return {
+      content: text.trim(),
+      template: `${template.emoji} ${template.name}`,
+      templateId: template.id,
+      generatedAt: new Date().toISOString(),
+      imageUrl,
+      imagePrompt,
+      provider,
+    };
   }
 }
 
