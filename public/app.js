@@ -70,6 +70,7 @@ function showDashboard() {
 function stopLoginPolling() {
   if (loginPollInterval) { clearInterval(loginPollInterval); loginPollInterval = null; }
   currentLoginToken = null;
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 }
 
 async function requestLoginToken() {
@@ -107,24 +108,40 @@ function startLoginPolling() {
   $('#loginVerifying').style.display = 'block';
   $('#showPasswordLogin').style.display = 'none';
 
-  loginPollInterval = setInterval(async () => {
-    try {
-      const res = await fetch(`/api/auth/check-login?token=${currentLoginToken}`);
-      const data = await res.json();
+  // Immediate check + polling
+  checkLoginToken();
+  loginPollInterval = setInterval(checkLoginToken, 2000);
 
-      if (data.status === 'verified') {
-        stopLoginPolling();
-        showLoginResult('success', '✅', 'Access Granted!');
-        setTimeout(() => showDashboard(), 1200);
-      } else if (data.status === 'denied') {
-        stopLoginPolling();
-        showLoginResult('denied', '🚫', 'Access Denied — Not an approved user');
-      } else if (data.status === 'expired') {
-        stopLoginPolling();
-        showLoginResult('expired', '⏰', 'Session expired — try again');
-      }
-    } catch { /* silent */ }
-  }, 2000);
+  // When user returns from Telegram app, the tab becomes visible again
+  // Browsers throttle/pause setInterval in background tabs, so we need this
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible' && currentLoginToken) {
+    // User came back to the tab — check immediately
+    checkLoginToken();
+  }
+}
+
+async function checkLoginToken() {
+  if (!currentLoginToken) return;
+  try {
+    const res = await fetch(`/api/auth/check-login?token=${currentLoginToken}`);
+    const data = await res.json();
+
+    if (data.status === 'verified') {
+      stopLoginPolling();
+      showLoginResult('success', '✅', 'Access Granted!');
+      setTimeout(() => showDashboard(), 1200);
+    } else if (data.status === 'denied') {
+      stopLoginPolling();
+      showLoginResult('denied', '🚫', 'Access Denied — Not an approved user');
+    } else if (data.status === 'expired') {
+      stopLoginPolling();
+      showLoginResult('expired', '⏰', 'Session expired — try again');
+    }
+  } catch { /* silent */ }
 }
 
 function showLoginResult(type, icon, text) {
