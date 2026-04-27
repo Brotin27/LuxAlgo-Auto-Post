@@ -36,6 +36,9 @@ function toast(message, type = 'info') {
 }
 
 // ─── Auth ──────────────────────────────────────────
+let loginPollInterval = null;
+let currentLoginToken = null;
+
 function showLogin() {
   $('#login-screen').style.display = 'flex';
   $('#dashboard').style.display = 'none';
@@ -44,13 +47,105 @@ function showLogin() {
   if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
   if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
+  stopLoginPolling();
+
+  // Reset login UI to initial state
+  $('#loginTelegram').style.display = 'block';
+  $('#loginVerifying').style.display = 'none';
+  $('#loginResult').style.display = 'none';
+  $('#loginPasswordSection').style.display = 'none';
+  $('#loginError').textContent = '';
+
+  // Auto-request login token
+  requestLoginToken();
 }
 
 function showDashboard() {
   $('#login-screen').style.display = 'none';
   $('#dashboard').style.display = 'block';
+  stopLoginPolling();
   initDashboard();
 }
+
+function stopLoginPolling() {
+  if (loginPollInterval) { clearInterval(loginPollInterval); loginPollInterval = null; }
+  currentLoginToken = null;
+}
+
+async function requestLoginToken() {
+  try {
+    const data = await fetch('/api/auth/bot-info').then(r => r.json());
+    if (!data.available) {
+      // Bot not available, show password login directly
+      $('#loginTelegram').style.display = 'none';
+      $('#loginPasswordSection').style.display = 'block';
+      $('#showPasswordLogin').style.display = 'none';
+      return;
+    }
+
+    const res = await fetch('/api/auth/request-login', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const loginData = await res.json();
+    if (loginData.token) {
+      currentLoginToken = loginData.token;
+      $('#telegramLoginLink').href = loginData.deepLink;
+      // Add click handler to start polling when button is clicked
+      $('#telegramLoginLink').onclick = () => startLoginPolling();
+    }
+  } catch {
+    // Fallback to password login
+    $('#loginTelegram').style.display = 'none';
+    $('#loginPasswordSection').style.display = 'block';
+    $('#showPasswordLogin').style.display = 'none';
+  }
+}
+
+function startLoginPolling() {
+  if (!currentLoginToken) return;
+
+  // Switch to verifying state
+  $('#loginTelegram').style.display = 'none';
+  $('#loginVerifying').style.display = 'block';
+  $('#showPasswordLogin').style.display = 'none';
+
+  loginPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/auth/check-login?token=${currentLoginToken}`);
+      const data = await res.json();
+
+      if (data.status === 'verified') {
+        stopLoginPolling();
+        showLoginResult('success', '✅', 'Access Granted!');
+        setTimeout(() => showDashboard(), 1200);
+      } else if (data.status === 'denied') {
+        stopLoginPolling();
+        showLoginResult('denied', '🚫', 'Access Denied — Not an approved user');
+      } else if (data.status === 'expired') {
+        stopLoginPolling();
+        showLoginResult('expired', '⏰', 'Session expired — try again');
+      }
+    } catch { /* silent */ }
+  }, 2000);
+}
+
+function showLoginResult(type, icon, text) {
+  $('#loginVerifying').style.display = 'none';
+  $('#loginResult').style.display = 'block';
+  $('#resultIcon').textContent = icon;
+  $('#resultText').textContent = text;
+  $('#resultText').style.color = type === 'success' ? 'var(--success)' : 'var(--error)';
+  if (type !== 'success') {
+    $('#retryLoginBtn').style.display = 'inline-block';
+  }
+}
+
+$('#cancelLoginBtn').addEventListener('click', () => {
+  stopLoginPolling();
+  showLogin();
+});
+
+$('#retryLoginBtn').addEventListener('click', () => {
+  showLogin();
+});
 
 async function checkAuth() {
   try {
@@ -65,6 +160,13 @@ async function checkAuth() {
   }
 }
 
+// Password fallback toggle
+$('#showPasswordLogin').addEventListener('click', () => {
+  const section = $('#loginPasswordSection');
+  section.style.display = section.style.display === 'none' ? 'block' : 'none';
+});
+
+// Password login (emergency fallback)
 $('#loginBtn').addEventListener('click', async () => {
   const pw = $('#loginPassword').value;
   if (!pw) {
@@ -88,7 +190,6 @@ $('#loginPassword').addEventListener('keydown', (e) => {
 $('#logoutBtn').addEventListener('click', async () => {
   await api('/auth/logout', 'POST');
   showLogin();
-  $('#loginPassword').value = '';
 });
 
 // ─── Dashboard Init ────────────────────────────────

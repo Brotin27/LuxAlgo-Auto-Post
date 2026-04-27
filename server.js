@@ -1,5 +1,6 @@
 const express = require('express');
 const session = require('express-session');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
@@ -108,6 +109,18 @@ const loginAttempts = new Map(); // IP -> { count, lastAttempt }
 const MAX_LOGIN_ATTEMPTS = 10;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 min
 
+// ─── Telegram Login Tokens ─────────────────────────
+const loginTokens = new Map(); // token -> {status, userId, userInfo, createdAt}
+const LOGIN_TOKEN_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Clean expired tokens every 60s
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, data] of loginTokens) {
+    if (now - data.createdAt > LOGIN_TOKEN_TTL) loginTokens.delete(token);
+  }
+}, 60000);
+
 function checkLoginRateLimit(ip) {
   const now = Date.now();
   const record = loginAttempts.get(ip);
@@ -128,6 +141,56 @@ function recordLoginAttempt(ip) {
 }
 
 // ─── Auth Routes ───────────────────────────────────
+
+// Telegram Deep Link Login: request a login token
+app.post('/api/auth/request-login', (req, res) => {
+  if (!bot.botUsername) {
+    return res.status(503).json({ error: 'Bot not available. Configure bot token first.' });
+  }
+  const token = crypto.randomBytes(16).toString('hex');
+  loginTokens.set(token, { status: 'pending', createdAt: Date.now() });
+  res.json({
+    token,
+    botUsername: bot.botUsername,
+    deepLink: `https://t.me/${bot.botUsername}?start=login_${token}`
+  });
+});
+
+// Telegram Deep Link Login: poll for verification
+app.get('/api/auth/check-login', (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ error: 'Token required' });
+
+  const data = loginTokens.get(token);
+  if (!data) return res.json({ status: 'expired' });
+
+  if (Date.now() - data.createdAt > LOGIN_TOKEN_TTL) {
+    loginTokens.delete(token);
+    return res.json({ status: 'expired' });
+  }
+
+  if (data.status === 'verified') {
+    req.session.authenticated = true;
+    req.session.userId = data.userId;
+    loginTokens.delete(token);
+    logger.success(`Dashboard login via Telegram — User ${data.userId} (@${data.userInfo?.username || 'N/A'})`);
+    return res.json({ status: 'verified', userId: data.userId });
+  }
+
+  if (data.status === 'denied') {
+    loginTokens.delete(token);
+    return res.json({ status: 'denied' });
+  }
+
+  res.json({ status: 'pending' });
+});
+
+// Bot info (public — needed to build deep link on frontend)
+app.get('/api/auth/bot-info', (req, res) => {
+  res.json({ available: !!bot.botUsername, username: bot.botUsername || null });
+});
+
+// Password login (emergency fallback)
 app.post('/api/auth/login', (req, res) => {
   const ip = req.ip || req.connection.remoteAddress;
   if (!checkLoginRateLimit(ip)) {
@@ -137,8 +200,8 @@ app.post('/api/auth/login', (req, res) => {
 
   if (req.body.password === config.dashboardPassword) {
     req.session.authenticated = true;
-    loginAttempts.delete(ip); // Reset on success
-    logger.info('Dashboard login successful');
+    loginAttempts.delete(ip);
+    logger.info('Dashboard login via password (fallback)');
     return res.json({ success: true });
   }
 
@@ -562,10 +625,20 @@ async function startApp() {
 
   // 5. Start Telegram bot
   try {
-    bot.init();
+    await bot.init();
   } catch (e) {
     logger.error('Telegram bot failed to start — check the bot token');
   }
+
+  // Wire Telegram login callback
+  bot.onLoginVerify = (token, userId, userInfo) => {
+    const data = loginTokens.get(token);
+    if (data && data.status === 'pending') {
+      data.status = 'verified';
+      data.userId = userId;
+      data.userInfo = userInfo;
+    }
+  };
 
   // 6. Start scheduler if keys available
   if (config.botEnabled && keyRotator.getKeyCount() > 0) {
