@@ -7,11 +7,9 @@ class Bot {
     this.bot = null;
     this.isRunning = false;
     this.onManualPost = null;
-    this.onLoginVerify = null;
-    this.botUsername = null;
   }
 
-  async init() {
+  init() {
     if (!this.config.botToken || this.config.botToken === 'YOUR_BOT_TOKEN_HERE') {
       logger.warn('Bot token not configured. Add it in the dashboard to start the Telegram bot.');
       return;
@@ -29,14 +27,6 @@ class Bot {
           logger.warn(`Telegram polling error: ${error.message}`);
         }
       });
-
-      try {
-        const me = await this.bot.getMe();
-        this.botUsername = me.username;
-        logger.info(`Bot username: @${this.botUsername}`);
-      } catch (e) {
-        logger.warn(`Could not fetch bot username: ${e.message}`);
-      }
 
       this.setupCommands();
       this.isRunning = true;
@@ -63,32 +53,8 @@ class Bot {
   }
 
   setupCommands() {
-    this.bot.onText(/\/start(?:\s+(.+))?$/, (msg, match) => {
-      const param = match[1]?.trim();
+    this.bot.onText(/\/start/, (msg) => {
       const userId = msg.from.id;
-
-      // Handle dashboard login deep link
-      if (param && param.startsWith('login_')) {
-        const token = param.replace('login_', '');
-        if (this.isApproved(userId)) {
-          if (this.onLoginVerify) {
-            this.onLoginVerify(token, userId, msg.from);
-          }
-          this.bot.sendMessage(msg.chat.id,
-            '✅ Dashboard access granted!\n\n' +
-            '🔓 You are verified. Return to the dashboard — it will open automatically.'
-          );
-          logger.success(`Dashboard login verified — User ${userId} (@${msg.from.username || 'N/A'})`);
-        } else {
-          this.bot.sendMessage(msg.chat.id,
-            '🚫 Access Denied!\n\nYou are not authorized to access the dashboard.\nContact the admin to get access.'
-          );
-          logger.warn(`Dashboard login denied — User ${userId} (@${msg.from.username || 'N/A'})`);
-        }
-        return;
-      }
-
-      // Regular /start flow
       if (!this.isApproved(userId)) {
         this.bot.sendMessage(msg.chat.id,
           '🚫 Access Denied!\n\nYou are not authorized to use this bot.\nContact the admin to get access.'

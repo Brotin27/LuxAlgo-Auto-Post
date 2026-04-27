@@ -13,11 +13,9 @@ async function api(endpoint, method = 'GET', body = null) {
   };
   if (body) opts.body = JSON.stringify(body);
 
-  console.log(`[API] ${method} ${endpoint}`);
   const res = await fetch(`/api${endpoint}`, opts);
 
   if (res.status === 401) {
-    console.warn('[API] Unauthorized — showing login');
     showLogin();
     throw new Error('Unauthorized');
   }
@@ -38,9 +36,6 @@ function toast(message, type = 'info') {
 }
 
 // ─── Auth ──────────────────────────────────────────
-let loginPollInterval = null;
-let currentLoginToken = null;
-
 function showLogin() {
   $('#login-screen').style.display = 'flex';
   $('#dashboard').style.display = 'none';
@@ -49,177 +44,27 @@ function showLogin() {
   if (refreshInterval) { clearInterval(refreshInterval); refreshInterval = null; }
   if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
   if (eventSource) { eventSource.close(); eventSource = null; }
-  stopLoginPolling();
-
-  // Reset login UI to initial state
-  $('#loginTelegram').style.display = 'block';
-  $('#loginVerifying').style.display = 'none';
-  $('#loginResult').style.display = 'none';
-  $('#loginPasswordSection').style.display = 'none';
-  $('#loginError').textContent = '';
-
-  // Auto-request login token or resume existing
-  const savedToken = localStorage.getItem('lux_login_token');
-  if (savedToken) {
-    currentLoginToken = savedToken;
-    resumeLoginPolling();
-  } else {
-    requestLoginToken();
-  }
 }
 
 function showDashboard() {
   $('#login-screen').style.display = 'none';
   $('#dashboard').style.display = 'block';
-  stopLoginPolling();
   initDashboard();
 }
 
-function stopLoginPolling() {
-  if (loginPollInterval) { clearInterval(loginPollInterval); loginPollInterval = null; }
-  currentLoginToken = null;
-  localStorage.removeItem('lux_login_token');
-  document.removeEventListener('visibilitychange', onVisibilityChange);
-}
-
-async function requestLoginToken() {
-  try {
-    const data = await fetch('/api/auth/bot-info').then(r => r.json());
-    if (!data.available) {
-      // Bot not available, show password login directly
-      $('#loginTelegram').style.display = 'none';
-      $('#loginPasswordSection').style.display = 'block';
-      $('#showPasswordLogin').style.display = 'none';
-      return;
-    }
-
-    const res = await fetch('/api/auth/request-login', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    const loginData = await res.json();
-    if (loginData.token) {
-      currentLoginToken = loginData.token;
-      localStorage.setItem('lux_login_token', currentLoginToken);
-      $('#telegramLoginLink').href = loginData.deepLink;
-      // Add click handler to start polling when button is clicked
-      $('#telegramLoginLink').onclick = () => startLoginPolling();
-    }
-  } catch {
-    // Fallback to password login
-    $('#loginTelegram').style.display = 'none';
-    $('#loginPasswordSection').style.display = 'block';
-    $('#showPasswordLogin').style.display = 'none';
-  }
-}
-
-function startLoginPolling() {
-  if (!currentLoginToken) return;
-
-  // Switch to verifying state
-  $('#loginTelegram').style.display = 'none';
-  $('#loginVerifying').style.display = 'block';
-  $('#showPasswordLogin').style.display = 'none';
-
-  // Immediate check + polling
-  checkLoginToken();
-  loginPollInterval = setInterval(checkLoginToken, 2000);
-
-  // When user returns from Telegram app, the tab becomes visible again
-  document.addEventListener('visibilitychange', onVisibilityChange);
-}
-
-// Resume polling without changing UI state unless needed
-async function resumeLoginPolling() {
-  if (!currentLoginToken) return;
-  
-  // We don't switch UI to 'Verifying' immediately to avoid flashing if token is already verified
-  // But we start polling
-  checkLoginToken();
-  loginPollInterval = setInterval(checkLoginToken, 2000);
-  document.addEventListener('visibilitychange', onVisibilityChange);
-}
-
-function onVisibilityChange() {
-  if (document.visibilityState === 'visible' && currentLoginToken) {
-    // User came back to the tab — check immediately
-    checkLoginToken();
-  }
-}
-
-async function checkLoginToken() {
-  if (!currentLoginToken) return;
-  try {
-    const res = await fetch(`/api/auth/check-login?token=${currentLoginToken}`);
-    const data = await res.json();
-
-    if (data.status === 'verified') {
-      stopLoginPolling();
-      showLoginResult('success', '✅', 'Access Granted!');
-      setTimeout(() => showDashboard(), 1200);
-    } else if (data.status === 'denied') {
-      stopLoginPolling();
-      showLoginResult('denied', '🚫', 'Access Denied — Not an approved user');
-    } else if (data.status === 'expired') {
-      stopLoginPolling();
-      // If it was a resumed token that expired, just request a new one silently
-      requestLoginToken();
-    } else if (data.status === 'pending' && $('#loginVerifying').style.display === 'none') {
-      // If we are polling a resumed token and it's still pending, show the verifying UI
-      // but only if we are still on the login screen
-      if ($('#login-screen').style.display !== 'none') {
-        const botData = await fetch('/api/auth/bot-info').then(r => r.json());
-        if (botData.available) {
-          $('#telegramLoginLink').href = `https://t.me/${botData.username}?start=login_${currentLoginToken}`;
-          $('#loginTelegram').style.display = 'none';
-          $('#loginVerifying').style.display = 'block';
-        }
-      }
-    }
-  } catch { /* silent */ }
-}
-
-function showLoginResult(type, icon, text) {
-  $('#loginVerifying').style.display = 'none';
-  $('#loginResult').style.display = 'block';
-  $('#resultIcon').textContent = icon;
-  $('#resultText').textContent = text;
-  $('#resultText').style.color = type === 'success' ? 'var(--success)' : 'var(--error)';
-  if (type !== 'success') {
-    $('#retryLoginBtn').style.display = 'inline-block';
-  }
-}
-
-$('#cancelLoginBtn').addEventListener('click', () => {
-  stopLoginPolling();
-  showLogin();
-});
-
-$('#retryLoginBtn').addEventListener('click', () => {
-  showLogin();
-});
-
 async function checkAuth() {
-  console.log('[Auth] Checking session...');
   try {
     const data = await api('/auth/check');
     if (data.authenticated) {
-      console.log('[Auth] Logged in');
       showDashboard();
     } else {
-      console.log('[Auth] Not logged in');
       showLogin();
     }
-  } catch (err) {
-    console.error('[Auth] Check failed:', err);
+  } catch {
     showLogin();
   }
 }
 
-// Password fallback toggle
-$('#showPasswordLogin').addEventListener('click', () => {
-  const section = $('#loginPasswordSection');
-  section.style.display = section.style.display === 'none' ? 'block' : 'none';
-});
-
-// Password login (emergency fallback)
 $('#loginBtn').addEventListener('click', async () => {
   const pw = $('#loginPassword').value;
   if (!pw) {
@@ -243,6 +88,7 @@ $('#loginPassword').addEventListener('keydown', (e) => {
 $('#logoutBtn').addEventListener('click', async () => {
   await api('/auth/logout', 'POST');
   showLogin();
+  $('#loginPassword').value = '';
 });
 
 // ─── Dashboard Init ────────────────────────────────
