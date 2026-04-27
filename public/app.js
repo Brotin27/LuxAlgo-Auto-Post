@@ -532,7 +532,7 @@ function startLiveLogStream() {
   eventSource.onmessage = (e) => {
     try {
       const entry = JSON.parse(e.data);
-      if (entry.type === 'connected') return;
+      if (entry.type === 'connected' || entry.type === 'heartbeat') return;
       appendLog(entry);
     } catch { /* silent */ }
   };
