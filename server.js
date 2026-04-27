@@ -627,22 +627,21 @@ async function startApp() {
     logger.info(`Approved users: ${config.approvedUsers.join(', ')}`);
   });
 
-  // 5. Start Telegram bot
-  try {
-    await bot.init();
-  } catch (e) {
-    logger.error('Telegram bot failed to start — check the bot token');
-  }
-
-  // Wire Telegram login callback
+  // 5. Wire Telegram login callback
   bot.onLoginVerify = (token, userId, userInfo) => {
     const data = loginTokens.get(token);
     if (data && data.status === 'pending') {
       data.status = 'verified';
       data.userId = userId;
       data.userInfo = userInfo;
+      logger.info(`Login token ${token} verified for user ${userId}`);
     }
   };
+
+  // 6. Start Telegram bot (non-blocking)
+  bot.init().catch(e => {
+    logger.error(`Telegram bot failed to start: ${e.message}`);
+  });
 
   // 6. Start scheduler if keys available
   if (config.botEnabled && keyRotator.getKeyCount() > 0) {

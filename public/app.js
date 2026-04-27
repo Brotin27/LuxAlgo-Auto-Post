@@ -13,9 +13,11 @@ async function api(endpoint, method = 'GET', body = null) {
   };
   if (body) opts.body = JSON.stringify(body);
 
+  console.log(`[API] ${method} ${endpoint}`);
   const res = await fetch(`/api${endpoint}`, opts);
 
   if (res.status === 401) {
+    console.warn('[API] Unauthorized — showing login');
     showLogin();
     throw new Error('Unauthorized');
   }
@@ -195,14 +197,18 @@ $('#retryLoginBtn').addEventListener('click', () => {
 });
 
 async function checkAuth() {
+  console.log('[Auth] Checking session...');
   try {
     const data = await api('/auth/check');
     if (data.authenticated) {
+      console.log('[Auth] Logged in');
       showDashboard();
     } else {
+      console.log('[Auth] Not logged in');
       showLogin();
     }
-  } catch {
+  } catch (err) {
+    console.error('[Auth] Check failed:', err);
     showLogin();
   }
 }
