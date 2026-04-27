@@ -56,8 +56,14 @@ function showLogin() {
   $('#loginPasswordSection').style.display = 'none';
   $('#loginError').textContent = '';
 
-  // Auto-request login token
-  requestLoginToken();
+  // Auto-request login token or resume existing
+  const savedToken = localStorage.getItem('lux_login_token');
+  if (savedToken) {
+    currentLoginToken = savedToken;
+    resumeLoginPolling();
+  } else {
+    requestLoginToken();
+  }
 }
 
 function showDashboard() {
@@ -70,6 +76,7 @@ function showDashboard() {
 function stopLoginPolling() {
   if (loginPollInterval) { clearInterval(loginPollInterval); loginPollInterval = null; }
   currentLoginToken = null;
+  localStorage.removeItem('lux_login_token');
   document.removeEventListener('visibilitychange', onVisibilityChange);
 }
 
@@ -88,6 +95,7 @@ async function requestLoginToken() {
     const loginData = await res.json();
     if (loginData.token) {
       currentLoginToken = loginData.token;
+      localStorage.setItem('lux_login_token', currentLoginToken);
       $('#telegramLoginLink').href = loginData.deepLink;
       // Add click handler to start polling when button is clicked
       $('#telegramLoginLink').onclick = () => startLoginPolling();
@@ -113,7 +121,17 @@ function startLoginPolling() {
   loginPollInterval = setInterval(checkLoginToken, 2000);
 
   // When user returns from Telegram app, the tab becomes visible again
-  // Browsers throttle/pause setInterval in background tabs, so we need this
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+
+// Resume polling without changing UI state unless needed
+async function resumeLoginPolling() {
+  if (!currentLoginToken) return;
+  
+  // We don't switch UI to 'Verifying' immediately to avoid flashing if token is already verified
+  // But we start polling
+  checkLoginToken();
+  loginPollInterval = setInterval(checkLoginToken, 2000);
   document.addEventListener('visibilitychange', onVisibilityChange);
 }
 
@@ -139,7 +157,19 @@ async function checkLoginToken() {
       showLoginResult('denied', '🚫', 'Access Denied — Not an approved user');
     } else if (data.status === 'expired') {
       stopLoginPolling();
-      showLoginResult('expired', '⏰', 'Session expired — try again');
+      // If it was a resumed token that expired, just request a new one silently
+      requestLoginToken();
+    } else if (data.status === 'pending' && $('#loginVerifying').style.display === 'none') {
+      // If we are polling a resumed token and it's still pending, show the verifying UI
+      // but only if we are still on the login screen
+      if ($('#login-screen').style.display !== 'none') {
+        const botData = await fetch('/api/auth/bot-info').then(r => r.json());
+        if (botData.available) {
+          $('#telegramLoginLink').href = `https://t.me/${botData.username}?start=login_${currentLoginToken}`;
+          $('#loginTelegram').style.display = 'none';
+          $('#loginVerifying').style.display = 'block';
+        }
+      }
     }
   } catch { /* silent */ }
 }

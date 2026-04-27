@@ -162,10 +162,13 @@ app.get('/api/auth/check-login', (req, res) => {
   if (!token) return res.status(400).json({ error: 'Token required' });
 
   const data = loginTokens.get(token);
-  if (!data) return res.json({ status: 'expired' });
+  if (!data) {
+    return res.json({ status: 'expired' });
+  }
 
   if (Date.now() - data.createdAt > LOGIN_TOKEN_TTL) {
     loginTokens.delete(token);
+    logger.warn(`Login token expired: ${token}`);
     return res.json({ status: 'expired' });
   }
 
@@ -173,12 +176,13 @@ app.get('/api/auth/check-login', (req, res) => {
     req.session.authenticated = true;
     req.session.userId = data.userId;
     loginTokens.delete(token);
-    logger.success(`Dashboard login via Telegram — User ${data.userId} (@${data.userInfo?.username || 'N/A'})`);
+    logger.success(`Dashboard login SESSION ESTABLISHED — User ${data.userId} (@${data.userInfo?.username || 'N/A'})`);
     return res.json({ status: 'verified', userId: data.userId });
   }
 
   if (data.status === 'denied') {
     loginTokens.delete(token);
+    logger.error(`Dashboard login denied — User ${data.userId}`);
     return res.json({ status: 'denied' });
   }
 
